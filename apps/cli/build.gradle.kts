@@ -18,6 +18,7 @@ dependencies {
     implementation(projects.modules.gradleRunner)
     implementation(projects.modules.styleIndex)
     implementation(projects.modules.policyEngine)
+    implementation("org.tomlj:tomlj:1.1.1")
     testImplementation(kotlin("test"))
 }
 

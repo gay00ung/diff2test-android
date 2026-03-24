@@ -28,6 +28,8 @@ import java.nio.file.Path
 
 fun main(args: Array<String>) {
     when (val command = args.firstOrNull()) {
+        "init" -> runInit(parseInitArguments(args.drop(1)))
+        "doctor" -> runDoctor()
         "scan" -> runScan()
         "plan" -> runPlan(args.getOrNull(1))
         "generate" -> runGenerate(parseGenerateArguments(args.drop(1)))
@@ -42,6 +44,25 @@ fun main(args: Array<String>) {
 }
 
 private val workspaceRoot: Path = findWorkspaceRoot(Path.of(System.getProperty("user.dir")))
+
+private fun runInit(options: InitOptions) {
+    val configPath = defaultConfigPath()
+    if (Files.exists(configPath) && !options.force) {
+        println("Config already exists: $configPath")
+        println("Use `./d2t init --force` to overwrite it.")
+        return
+    }
+
+    Files.createDirectories(configPath.parent)
+    Files.writeString(configPath, defaultConfigTemplate())
+    println("Wrote config template to $configPath")
+}
+
+private fun runDoctor() {
+    val loadResult = loadConfig()
+    val resolved = resolveAiConfiguration(loadResult, System.getenv())
+    println(renderDoctorReport(loadResult, resolved))
+}
 
 private fun runScan() {
     val changeSet = GitDiffChangeDetector().scan(
@@ -250,6 +271,10 @@ private data class GenerateOptions(
     val model: String?,
 )
 
+private data class InitOptions(
+    val force: Boolean,
+)
+
 private data class AutoOptions(
     val aiPreference: AiPreference,
     val model: String?,
@@ -302,6 +327,17 @@ private fun parseGenerateArguments(arguments: List<String>): GenerateOptions {
     )
 }
 
+private fun parseInitArguments(arguments: List<String>): InitOptions {
+    var force = false
+    arguments.forEach { argument ->
+        when (argument) {
+            "--force" -> force = true
+            else -> error("Unknown init option: $argument")
+        }
+    }
+    return InitOptions(force = force)
+}
+
 private fun parseAutoArguments(arguments: List<String>): AutoOptions {
     var aiPreference = AiPreference.AUTO
     var model: String? = null
@@ -332,12 +368,23 @@ private fun createGenerator(
     aiPreference: AiPreference,
     modelOverride: String?,
 ): dev.diff2test.android.testgenerator.TestGenerator {
-    val config = responsesApiConfigFromEnvironment(modelOverride)
+    val loadResult = loadConfig()
+    val resolvedFromConfig = resolveAiConfiguration(loadResult, System.getenv(), modelOverride)
+    val config = when {
+        resolvedFromConfig != null -> toResponsesApiConfig(resolvedFromConfig, System.getenv())
+        else -> responsesApiConfigFromEnvironment(modelOverride)
+    }
+    val configIssue = when {
+        resolvedFromConfig?.supportedByGenerator == false -> resolvedFromConfig.issue
+        resolvedFromConfig != null && config == null -> resolvedFromConfig.issue ?: "Config could not be resolved."
+        else -> null
+    }
 
     return when (aiPreference) {
         AiPreference.ENABLED -> {
-            check(config != null) {
-                "--ai requires one of D2T_AI_AUTH_TOKEN, LLM_API_KEY, ANTHROPIC_AUTH_TOKEN, D2T_OPENAI_API_KEY, or OPENAI_API_KEY."
+            check(config != null && configIssue == null) {
+                configIssue
+                    ?: "--ai requires a valid config file or one of D2T_AI_AUTH_TOKEN, LLM_API_KEY, ANTHROPIC_AUTH_TOKEN, D2T_OPENAI_API_KEY, or OPENAI_API_KEY."
             }
             println("Using Responses API-compatible test generator (${config.model})")
             ResponsesApiTestGenerator(config)
@@ -345,7 +392,7 @@ private fun createGenerator(
 
         AiPreference.DISABLED -> KotlinUnitTestGenerator()
         AiPreference.AUTO -> {
-            if (config != null) {
+            if (config != null && configIssue == null) {
                 println("Using Responses API-compatible test generator (${config.model})")
                 ResponsesApiTestGenerator(config)
             } else {
@@ -357,12 +404,16 @@ private fun createGenerator(
 
 private fun printHelp() {
     println("d2t commands:")
+    println("  init [--force]")
+    println("  doctor")
     println("  scan")
     println("  plan [path-to-viewmodel]")
     println("  generate [path-to-viewmodel] [--write] [--output-root path] [--ai|--no-ai] [--model model-name]")
     println("  auto [--ai|--no-ai] [--model model-name]")
     println("  verify [gradle-task]")
-    println("Environment:")
+    println("Config:")
+    println("  ~/.config/d2t/config.toml")
+    println("Legacy env fallback:")
     println("  D2T_AI_AUTH_TOKEN / LLM_API_KEY / ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY")
     println("  D2T_AI_MODEL / STRIX_LLM / ANTHROPIC_MODEL / OPENAI_MODEL")
     println("  D2T_AI_BASE_URL / LLM_API_BASE / ANTHROPIC_BASE_URL / OPENAI_BASE_URL")
