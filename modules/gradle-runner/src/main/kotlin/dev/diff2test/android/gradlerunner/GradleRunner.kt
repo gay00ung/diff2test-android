@@ -3,6 +3,8 @@ package dev.diff2test.android.gradlerunner
 import dev.diff2test.android.core.ExecutionResult
 import dev.diff2test.android.core.ExecutionStatus
 import dev.diff2test.android.core.GradleRunRequest
+import java.nio.file.Files
+import java.nio.file.Path
 
 interface GradleRunner {
     fun run(request: GradleRunRequest): ExecutionResult
@@ -10,7 +12,8 @@ interface GradleRunner {
 
 class JvmGradleRunner : GradleRunner {
     override fun run(request: GradleRunRequest): ExecutionResult {
-        val wrapper = request.workingDirectory.resolve("gradlew").toFile()
+        val projectRoot = findGradleProjectRoot(request.workingDirectory)
+        val wrapper = projectRoot.resolve("gradlew").toFile()
         val executable = if (wrapper.exists()) wrapper.absolutePath else "gradle"
         val command = mutableListOf(executable, request.task)
 
@@ -19,7 +22,7 @@ class JvmGradleRunner : GradleRunner {
         }
 
         val process = ProcessBuilder(command)
-            .directory(request.workingDirectory.toFile())
+            .directory(projectRoot.toFile())
             .redirectErrorStream(true)
             .start()
 
@@ -35,3 +38,15 @@ class JvmGradleRunner : GradleRunner {
     }
 }
 
+internal fun findGradleProjectRoot(start: Path): Path {
+    var current: Path? = start.toAbsolutePath().normalize()
+
+    while (current != null) {
+        if (Files.exists(current.resolve("gradlew")) || Files.exists(current.resolve("settings.gradle.kts"))) {
+            return current
+        }
+        current = current.parent
+    }
+
+    return start.toAbsolutePath().normalize()
+}
