@@ -1,13 +1,29 @@
-# diff2test-android
+<div align="center">
+  <h1>diff2test-android</h1>
+  <p><strong>Diff-driven Android ViewModel test generation CLI</strong></p>
+  <p>Scan changed ViewModels, plan tests, generate candidate local unit tests, and verify them with Gradle.</p>
+  <p>
+    <a href="https://github.com/gay00ung/diff2test-android/stargazers">
+      <img alt="GitHub stars" src="https://img.shields.io/github/stars/gay00ung/diff2test-android?style=flat-square">
+    </a>
+    <a href="https://github.com/gay00ung/diff2test-android/releases">
+      <img alt="Release ZIP" src="https://img.shields.io/badge/release-d2t.zip-2563eb?style=flat-square">
+    </a>
+    <a href="https://github.com/gay00ung/diff2test-android/releases">
+      <img alt="Homebrew" src="https://img.shields.io/badge/install-Homebrew-fbbf24?style=flat-square&logo=homebrew">
+    </a>
+    <img alt="Status Preview" src="https://img.shields.io/badge/status-preview-f97316?style=flat-square">
+    <img alt="Kotlin 1.9.25" src="https://img.shields.io/badge/kotlin-1.9.25-7f52ff?style=flat-square">
+    <img alt="Java 17" src="https://img.shields.io/badge/java-17-437291?style=flat-square">
+  </p>
+  <p>
+    <a href="./README.md">English</a>
+    ·
+    <a href="./README.ko.md">한국어</a>
+  </p>
+</div>
 
-[![Release](https://img.shields.io/github/v/release/gay00ung/diff2test-android?style=for-the-badge)](https://github.com/gay00ung/diff2test-android/releases)
-[![Stars](https://img.shields.io/github/stars/gay00ung/diff2test-android?style=for-the-badge)](https://github.com/gay00ung/diff2test-android/stargazers)
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.25-7f52ff?style=for-the-badge)](https://kotlinlang.org)
-[![Java](https://img.shields.io/badge/Java-17-437291?style=for-the-badge)](https://adoptium.net)
-[![Status](https://img.shields.io/badge/Status-Preview-f97316?style=for-the-badge)](https://github.com/gay00ung/diff2test-android)
-
-[![English](https://img.shields.io/badge/Language-English-1f6feb?style=for-the-badge)](./README.md)
-[![한국어](https://img.shields.io/badge/언어-한국어-0f9d58?style=for-the-badge)](./README.ko.md)
+> Preview build: the CLI is usable today from source, a release ZIP, or Homebrew. The MCP app is still a catalog scaffold, not a transport-bound MCP server.
 
 `diff2test-android` is a Kotlin-based CLI for diff-driven Android ViewModel test generation.
 
