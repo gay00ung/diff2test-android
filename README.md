@@ -1,61 +1,104 @@
 # diff2test-android
 
+[![Release](https://img.shields.io/github/v/release/gay00ung/diff2test-android?style=for-the-badge)](https://github.com/gay00ung/diff2test-android/releases)
+[![Stars](https://img.shields.io/github/stars/gay00ung/diff2test-android?style=for-the-badge)](https://github.com/gay00ung/diff2test-android/stargazers)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.25-7f52ff?style=for-the-badge)](https://kotlinlang.org)
+[![Java](https://img.shields.io/badge/Java-17-437291?style=for-the-badge)](https://adoptium.net)
+[![Status](https://img.shields.io/badge/Status-Preview-f97316?style=for-the-badge)](https://github.com/gay00ung/diff2test-android)
+
 [![English](https://img.shields.io/badge/Language-English-1f6feb?style=for-the-badge)](./README.md)
 [![한국어](https://img.shields.io/badge/언어-한국어-0f9d58?style=for-the-badge)](./README.ko.md)
 
-`diff2test-android` is a Kotlin monorepo for Android test generation driven by code diffs.
+`diff2test-android` is a Kotlin-based CLI for diff-driven Android ViewModel test generation.
 
-The repository is structured around three layers:
+It is currently best understood as a developer preview:
 
-- Core engine modules for deterministic analysis, planning, generation, execution, and repair
-- A CLI app for local execution and workflow orchestration
-- An MCP-facing app that exposes tools, resources, and prompts on top of the same engine contracts
+- The CLI is usable today from source or a release ZIP.
+- Homebrew distribution is the recommended macOS install path.
+- The MCP app is still a catalog scaffold, not a transport-bound MCP server.
 
-## Current Scope
+## What It Does
 
-The current scaffold targets ViewModel-focused local unit tests under `src/test`, with patch preview and bounded repair attempts.
+Today the project focuses on a narrow workflow:
 
-Planned v1 capabilities:
+- detect changed ViewModel files from `git diff`
+- analyze changed methods and collaborators
+- build a scenario-first `TestPlan`
+- generate candidate local unit tests
+- verify generated tests with Gradle
 
-- Detect ViewModel-oriented changes from diffs
-- Analyze target APIs, state holders, and collaborators
-- Build a scenario-first `TestPlan`
-- Generate candidate local unit tests
-- Run targeted Gradle verification
-- Allow at most two repair attempts
+The repository is organized into three layers:
 
-## Repository Layout
+- engine modules under `modules/*`
+- a local CLI app under `apps/cli`
+- an MCP-facing catalog scaffold under `apps/mcp-server`
 
-- `apps/cli`: local command entry point
-- `apps/mcp-server`: MCP catalog and server-facing contracts
-- `modules/*`: engine modules
-- `prompts/*`: prompt and policy templates
-- `docs/*`: architecture and contract documents
-- `fixtures/*`: sample app and golden data
+## Install
+
+### Homebrew on macOS
+
+The recommended install path for macOS users is Homebrew.
+
+Direct install without tapping first:
+
+```bash
+brew install gay00ung/diff2test-android/d2t
+```
+
+Optional tap flow:
+
+```bash
+brew tap gay00ung/diff2test-android
+brew install d2t
+```
+
+### Run from a Release ZIP
+
+Download `d2t.zip` from the latest release and run:
+
+```bash
+unzip d2t.zip
+cd d2t
+./bin/d2t help
+```
+
+### Run from Source
+
+```bash
+git clone https://github.com/gay00ung/diff2test-android.git
+cd diff2test-android
+./gradlew test
+./d2t help
+```
 
 ## Quick Start
 
 ```bash
-./gradlew test
-./d2t init
-./d2t doctor
-./d2t auto --ai
+d2t init
+d2t doctor
+d2t auto --ai
 ```
 
-## AI Setup
+If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`.
 
-The CLI now supports a user-level config file at `~/.config/d2t/config.toml`.
+## AI Configuration
 
-Create a starter config:
+The CLI reads user-level configuration from:
 
 ```bash
-./d2t init
+~/.config/d2t/config.toml
 ```
 
-Validate the current AI configuration:
+Generate a starter config:
 
 ```bash
-./d2t doctor
+d2t init
+```
+
+Inspect the current configuration:
+
+```bash
+d2t doctor
 ```
 
 The config stores only the environment variable name for the API key, not the secret itself.
@@ -89,32 +132,54 @@ connect_timeout_seconds = 30
 request_timeout_seconds = 300
 ```
 
-Then export the key in your shell and run:
+Then load your shell environment and run:
 
 ```bash
 source ~/.zshrc
-./d2t auto --ai
+d2t auto --ai
 ```
-
-Current note:
-
-- `responses-compatible` endpoints are supported today.
-- Native Anthropic-style `messages` transport is not implemented yet.
-- If your provider exposes a Responses-compatible gateway, use `provider = "custom"`.
 
 ## Commands
 
 ```bash
-./d2t init [--force]
-./d2t doctor
-./d2t scan
-./d2t plan path/to/SomeViewModel.kt
-./d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai]
-./d2t auto [--ai|--no-ai] [--model model-name]
-./d2t verify :module:testTask
+d2t init [--force]
+d2t doctor
+d2t scan
+d2t plan path/to/SomeViewModel.kt
+d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai]
+d2t auto [--ai|--no-ai] [--model model-name]
+d2t verify :module:testTask
 ```
 
-## Legacy Env Fallback
+## Homebrew Packaging
+
+This repository already includes:
+
+- a Gradle distribution task: `./gradlew :apps:cli:distZip`
+- a Homebrew formula template: [`packaging/homebrew/d2t.rb`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/packaging/homebrew/d2t.rb)
+- a release guide: [`docs/homebrew-release.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/homebrew-release.md)
+
+`distZip` creates a runnable CLI bundle that contains:
+
+- the `d2t` launcher
+- compiled jars
+- runtime dependencies
+
+The generated archive is written under:
+
+```bash
+apps/cli/build/distributions/d2t.zip
+```
+
+## Current Limitations
+
+- The Kotlin analyzer is still heuristic and should be replaced with PSI or symbol resolution.
+- AI generation currently supports Responses-compatible endpoints only.
+- Native Anthropic `messages` transport is not implemented yet.
+- The repair loop is not implemented end-to-end yet.
+- The MCP app is not yet a real transport-bound server.
+
+## Legacy Environment Fallback
 
 If no config file exists, the CLI still falls back to environment variables.
 
@@ -122,9 +187,14 @@ If no config file exists, the CLI still falls back to environment variables.
 - Model: `D2T_AI_MODEL`, `STRIX_LLM`, `ANTHROPIC_MODEL`, `OPENAI_MODEL`
 - Base URL: `D2T_AI_BASE_URL`, `LLM_API_BASE`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`
 - Reasoning: `D2T_REASONING_EFFORT`, `STRIX_RESONING_EFFORT`, `OPENAI_REASONING_EFFORT`
+- Connect timeout: `D2T_CONNECT_TIMEOUT_SECONDS`, `LLM_CONNECT_TIMEOUT_SECONDS`, `OPENAI_CONNECT_TIMEOUT_SECONDS`
+- Request timeout: `D2T_REQUEST_TIMEOUT_SECONDS`, `LLM_REQUEST_TIMEOUT_SECONDS`, `OPENAI_REQUEST_TIMEOUT_SECONDS`
 
-## Notes
+## Repository Layout
 
-- The current CLI detects changed ViewModels from git diff and can generate test files automatically.
-- The analyzer is still heuristic. Replacing it with real Kotlin AST or symbol analysis remains a priority.
-- MCP exposure currently ships as a catalog scaffold, not a transport-bound server implementation.
+- `apps/cli`: local command entry point
+- `apps/mcp-server`: MCP catalog scaffold
+- `modules/*`: engine modules
+- `prompts/*`: prompt and policy templates
+- `docs/*`: architecture and release docs
+- `fixtures/*`: sample app and verification fixtures
