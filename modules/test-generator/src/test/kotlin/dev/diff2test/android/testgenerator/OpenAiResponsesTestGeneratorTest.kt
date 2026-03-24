@@ -1,7 +1,17 @@
 package dev.diff2test.android.testgenerator
 
+import dev.diff2test.android.core.CollaboratorDependency
+import dev.diff2test.android.core.RiskLevel
+import dev.diff2test.android.core.StyleGuide
+import dev.diff2test.android.core.TestContext
+import dev.diff2test.android.core.TestPlan
+import dev.diff2test.android.core.TestType
+import dev.diff2test.android.core.ViewModelAnalysis
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContains
 import kotlin.test.assertTrue
 
 class OpenAiResponsesTestGeneratorTest {
@@ -42,6 +52,45 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `prompt includes collaborator source when available`() {
+        val fixturePath = findRepoRoot()
+            .resolve("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt")
+        val analysis = ViewModelAnalysis(
+            className = "SignUpViewModel",
+            packageName = "com.example.auth",
+            filePath = fixturePath,
+            constructorDependencies = listOf(
+                CollaboratorDependency(
+                    name = "registerUser",
+                    type = "RegisterUserUseCase",
+                    role = "use case",
+                ),
+            ),
+        )
+        val plan = TestPlan(
+            targetClass = "SignUpViewModel",
+            targetMethods = listOf("submitRegistration"),
+            testType = TestType.LOCAL_UNIT,
+            scenarios = emptyList(),
+            requiredFakes = emptyList(),
+            assertions = emptyList(),
+            riskLevel = RiskLevel.LOW,
+        )
+        val context = TestContext(
+            moduleName = "app",
+            styleGuide = StyleGuide(),
+        )
+
+        val prompt = buildPromptSpec(plan, context, analysis)
+
+        assertContains(prompt.input, "## Dependency Sources")
+        assertContains(prompt.input, "### RegisterUserUseCase")
+        assertContains(prompt.input, "suspend operator fun invoke")
+        assertContains(prompt.input, "Result<String>")
+        assertContains(prompt.instructions, "preserve its method names, parameter lists, and exact return types")
+    }
+
+    @Test
     fun `extracts structured payload from responses api body`() {
         val responseBody = """
             {
@@ -66,5 +115,18 @@ class OpenAiResponsesTestGeneratorTest {
             payload.content,
         )
         assertEquals(listOf("generated from ai"), payload.warnings)
+    }
+
+    private fun findRepoRoot(): Path {
+        var current: Path? = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
+
+        while (current != null) {
+            if (Files.exists(current.resolve("fixtures/sample-app"))) {
+                return current
+            }
+            current = current.parent
+        }
+
+        error("Could not locate repository root from ${System.getProperty("user.dir")}")
     }
 }

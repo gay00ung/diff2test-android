@@ -242,6 +242,7 @@ internal fun buildPromptSpec(
         "Generate Kotlin tests from a TestPlan."
     }
     val sourceText = Files.readString(analysis.filePath)
+    val dependencySources = loadDependencySources(analysis)
     val targetClassName = "${analysis.className}GeneratedTest"
     val targetRelativePath = generatedTestRelativePath(plan, analysis)
 
@@ -255,6 +256,7 @@ internal fun buildPromptSpec(
         appendLine("Target file path: $targetRelativePath")
         appendLine("Prefer constructor-injected fakes over Android runtime dependencies.")
         appendLine("If information is missing, keep the code honest with TODO() or focused fake implementations instead of inventing APIs.")
+        appendLine("When dependency source is provided, preserve its method names, parameter lists, and exact return types in all stubs and mocks.")
     }
 
     val input = buildString {
@@ -316,6 +318,16 @@ internal fun buildPromptSpec(
         appendLine("```kotlin")
         appendLine(sourceText.trimEnd())
         appendLine("```")
+        if (dependencySources.isNotEmpty()) {
+            appendLine()
+            appendLine("## Dependency Sources")
+            dependencySources.forEach { dependencySource ->
+                appendLine("### ${dependencySource.first}")
+                appendLine("```kotlin")
+                appendLine(dependencySource.second.trimEnd())
+                appendLine("```")
+            }
+        }
         appendLine()
         appendLine("## Output requirements")
         appendLine("- use package `${analysis.packageName}`")
@@ -331,6 +343,16 @@ internal fun buildPromptSpec(
         instructions = instructions.trim(),
         input = input.trim(),
     )
+}
+
+private fun loadDependencySources(
+    analysis: ViewModelAnalysis,
+): List<Pair<String, String>> {
+    val moduleRoot = inferModuleRootFromTarget(analysis.filePath)
+    return analysis.constructorDependencies.mapNotNull { dependency ->
+        val sourceFile = resolveTypeFile(moduleRoot, dependency.type) ?: return@mapNotNull null
+        dependency.type to Files.readString(sourceFile)
+    }
 }
 
 internal fun extractStructuredPayload(responseBody: String): StructuredTestPayload {
@@ -390,6 +412,27 @@ private fun findWorkspaceRoot(start: Path): Path {
     }
 
     return start.toAbsolutePath().normalize()
+}
+
+private fun resolveTypeFile(moduleRoot: Path, typeName: String): Path? {
+    val sourceRoots = listOf(
+        moduleRoot.resolve("src/main/kotlin"),
+        moduleRoot.resolve("src/main/java"),
+    ).filter(Files::exists)
+
+    sourceRoots.forEach { sourceRoot ->
+        Files.walk(sourceRoot).use { paths ->
+            val match = paths
+                .filter(Files::isRegularFile)
+                .filter { it.fileName.toString() == "$typeName.kt" }
+                .findFirst()
+            if (match.isPresent) {
+                return match.get()
+            }
+        }
+    }
+
+    return null
 }
 
 private fun firstDefinedValue(
