@@ -32,6 +32,8 @@ class OpenAiResponsesTestGeneratorTest {
         assertEquals("http://127.0.0.1:12345", config?.baseUrl)
         assertEquals("glm-4.7-flash-claude-opus-4.5-high-reasoning-distill", config?.model)
         assertEquals("high", config?.reasoningEffort)
+        assertEquals(30L, config?.connectTimeoutSeconds)
+        assertEquals(180L, config?.requestTimeoutSeconds)
     }
 
     @Test
@@ -42,6 +44,7 @@ class OpenAiResponsesTestGeneratorTest {
                 model = "qwen3-coder-next-mlx",
                 baseUrl = "http://127.0.0.1:12345",
                 reasoningEffort = "high",
+                requestTimeoutSeconds = 240,
             ),
             instructions = "Generate tests",
             input = "input",
@@ -49,6 +52,22 @@ class OpenAiResponsesTestGeneratorTest {
 
         assertTrue("\"reasoning\"" in requestBody)
         assertTrue("\"effort\":\"high\"" in requestBody)
+    }
+
+    @Test
+    fun `normalizes junit test imports to kotlin test`() {
+        val content = """
+            package com.example.auth
+
+            import org.junit.Test
+
+            class SignUpViewModelGeneratedTest
+        """.trimIndent()
+
+        val sanitized = sanitizeGeneratedKotlin(content)
+
+        assertContains(sanitized, "import kotlin.test.Test")
+        assertTrue("import org.junit.Test" !in sanitized)
     }
 
     @Test

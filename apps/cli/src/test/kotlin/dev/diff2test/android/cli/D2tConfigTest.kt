@@ -22,6 +22,8 @@ class D2tConfigTest {
             model = "gpt-5"
             base_url = "https://api.openai.com/v1"
             reasoning_effort = "high"
+            connect_timeout_seconds = 45
+            request_timeout_seconds = 240
             """.trimIndent(),
         )
 
@@ -34,6 +36,8 @@ class D2tConfigTest {
         assertEquals("gpt-5", loaded.config.ai.model)
         assertEquals("https://api.openai.com/v1", loaded.config.ai.baseUrl)
         assertEquals("high", loaded.config.ai.reasoningEffort)
+        assertEquals(45L, loaded.config.ai.connectTimeoutSeconds)
+        assertEquals(240L, loaded.config.ai.requestTimeoutSeconds)
     }
 
     @Test
@@ -49,6 +53,8 @@ class D2tConfigTest {
                         model = "qwen3-coder-next-mlx",
                         baseUrl = "http://127.0.0.1:12345",
                         reasoningEffort = "high",
+                        connectTimeoutSeconds = 12L,
+                        requestTimeoutSeconds = 300L,
                     ),
                 ),
             ),
@@ -61,6 +67,8 @@ class D2tConfigTest {
         assertEquals("qwen3-coder-next-mlx", resolved?.model)
         assertEquals("http://127.0.0.1:12345", resolved?.baseUrl)
         assertEquals("high", resolved?.reasoningEffort)
+        assertEquals(12L, resolved?.connectTimeoutSeconds)
+        assertEquals(300L, resolved?.requestTimeoutSeconds)
         assertTrue(resolved?.supportedByGenerator == true)
     }
 
@@ -91,6 +99,7 @@ class D2tConfigTest {
         val template = defaultConfigTemplate()
 
         assertContains(template, "api_key_env = \"OPENAI_API_KEY\"")
+        assertContains(template, "request_timeout_seconds = 180")
         assertTrue("sk-" !in template)
     }
 }

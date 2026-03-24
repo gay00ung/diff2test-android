@@ -70,6 +70,8 @@ protocol = "responses-compatible"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5"
 base_url = "https://api.openai.com/v1"
+connect_timeout_seconds = 30
+request_timeout_seconds = 180
 ```
 
 로컬 또는 self-hosted Responses-compatible 게이트웨이 예시:
@@ -83,6 +85,8 @@ api_key_env = "LLM_API_KEY"
 model = "qwen3-coder-next-mlx"
 base_url = "http://127.0.0.1:12345"
 reasoning_effort = "high"
+connect_timeout_seconds = 30
+request_timeout_seconds = 300
 ```
 
 그다음 셸에서 키를 로드한 뒤 실행하면 된다.

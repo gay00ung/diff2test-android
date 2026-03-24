@@ -26,6 +26,8 @@ data class D2tAiConfig(
     val model: String? = null,
     val baseUrl: String? = null,
     val reasoningEffort: String? = null,
+    val connectTimeoutSeconds: Long? = null,
+    val requestTimeoutSeconds: Long? = null,
 )
 
 data class D2tConfig(
@@ -57,6 +59,8 @@ data class ResolvedAiConfiguration(
     val model: String,
     val baseUrl: String?,
     val reasoningEffort: String?,
+    val connectTimeoutSeconds: Long,
+    val requestTimeoutSeconds: Long,
     val supportedByGenerator: Boolean,
     val issue: String? = null,
 )
@@ -112,6 +116,8 @@ internal fun parseConfig(parseResult: TomlParseResult): D2tConfig {
             model = ai.getString("model"),
             baseUrl = ai.getString("base_url"),
             reasoningEffort = ai.getString("reasoning_effort"),
+            connectTimeoutSeconds = ai.getLong("connect_timeout_seconds"),
+            requestTimeoutSeconds = ai.getLong("request_timeout_seconds"),
         ),
     )
 }
@@ -175,6 +181,8 @@ internal fun resolveAiConfiguration(
     val apiKeyPresent = apiKeyEnv != null && !environment[apiKeyEnv].isNullOrBlank()
     val model = modelOverride ?: ai.model ?: defaultModelFor(ai.provider)
     val baseUrl = ai.baseUrl ?: defaultBaseUrlFor(ai.provider)
+    val connectTimeoutSeconds = ai.connectTimeoutSeconds ?: 30L
+    val requestTimeoutSeconds = ai.requestTimeoutSeconds ?: 180L
     val issue = when {
         apiKeyEnv == null -> "Set ai.api_key_env in config.toml."
         !apiKeyPresent -> "Environment variable `$apiKeyEnv` is not set."
@@ -194,6 +202,8 @@ internal fun resolveAiConfiguration(
         model = model ?: "",
         baseUrl = baseUrl,
         reasoningEffort = ai.reasoningEffort,
+        connectTimeoutSeconds = connectTimeoutSeconds,
+        requestTimeoutSeconds = requestTimeoutSeconds,
         supportedByGenerator = issue == null,
         issue = issue,
     )
@@ -215,6 +225,8 @@ internal fun toResponsesApiConfig(
         model = resolved.model,
         baseUrl = resolved.baseUrl,
         reasoningEffort = resolved.reasoningEffort,
+        connectTimeoutSeconds = resolved.connectTimeoutSeconds,
+        requestTimeoutSeconds = resolved.requestTimeoutSeconds,
     )
 }
 
@@ -257,6 +269,8 @@ fun renderDoctorReport(
                     appendLine("API key env: ${resolved.apiKeyEnv}")
                     appendLine("API key present: ${if (resolved.apiKeyPresent) "yes" else "no"}")
                     appendLine("Reasoning effort: ${resolved.reasoningEffort ?: "(default)"}")
+                    appendLine("Connect timeout: ${resolved.connectTimeoutSeconds}s")
+                    appendLine("Request timeout: ${resolved.requestTimeoutSeconds}s")
                     appendLine("Supported now: ${if (resolved.supportedByGenerator) "yes" else "no"}")
                     if (resolved.issue != null) {
                         appendLine("Issue: ${resolved.issue}")
@@ -286,6 +300,8 @@ api_key_env = "OPENAI_API_KEY"
 model = "gpt-5"
 base_url = "https://api.openai.com/v1"
 # reasoning_effort = "high"
+# connect_timeout_seconds = 30
+# request_timeout_seconds = 180
 
 # Example for a local or self-hosted Responses-compatible server:
 # provider = "custom"
@@ -294,5 +310,7 @@ base_url = "https://api.openai.com/v1"
 # model = "qwen3-coder-next-mlx"
 # base_url = "http://127.0.0.1:12345"
 # reasoning_effort = "high"
+# connect_timeout_seconds = 30
+# request_timeout_seconds = 300
     """.trimIndent() + "\n"
 }

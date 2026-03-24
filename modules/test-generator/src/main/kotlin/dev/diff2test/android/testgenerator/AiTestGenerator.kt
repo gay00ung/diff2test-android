@@ -27,6 +27,8 @@ data class ResponsesApiConfig(
     val model: String,
     val baseUrl: String,
     val reasoningEffort: String? = null,
+    val connectTimeoutSeconds: Long = 30,
+    val requestTimeoutSeconds: Long = 180,
 )
 
 fun responsesApiConfigFromEnvironment(modelOverride: String? = null): ResponsesApiConfig? {
@@ -80,12 +82,26 @@ internal fun responsesApiConfigFromEnvironment(
         "STRIX_REASONING_EFFORT",
         "OPENAI_REASONING_EFFORT",
     )
+    val connectTimeoutSeconds = firstDefinedValue(
+        environment,
+        "D2T_CONNECT_TIMEOUT_SECONDS",
+        "LLM_CONNECT_TIMEOUT_SECONDS",
+        "OPENAI_CONNECT_TIMEOUT_SECONDS",
+    )?.toLongOrNull() ?: 30L
+    val requestTimeoutSeconds = firstDefinedValue(
+        environment,
+        "D2T_REQUEST_TIMEOUT_SECONDS",
+        "LLM_REQUEST_TIMEOUT_SECONDS",
+        "OPENAI_REQUEST_TIMEOUT_SECONDS",
+    )?.toLongOrNull() ?: 180L
 
     return ResponsesApiConfig(
         apiKey = apiKey,
         model = model,
         baseUrl = baseUrl.removeSuffix("/"),
         reasoningEffort = reasoningEffort?.trim()?.ifBlank { null },
+        connectTimeoutSeconds = connectTimeoutSeconds,
+        requestTimeoutSeconds = requestTimeoutSeconds,
     )
 }
 
@@ -93,7 +109,7 @@ class ResponsesApiTestGenerator(
     private val config: ResponsesApiConfig,
     private val fallback: TestGenerator = KotlinUnitTestGenerator(),
     private val httpClient: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(30))
+        .connectTimeout(Duration.ofSeconds(config.connectTimeoutSeconds))
         .build(),
 ) : TestGenerator {
     override fun generate(
@@ -134,7 +150,7 @@ class ResponsesApiTestGenerator(
     private fun executeResponsesRequest(requestBody: String): String {
         val request = HttpRequest.newBuilder()
             .uri(URI.create("${config.baseUrl}/responses"))
-            .timeout(Duration.ofSeconds(90))
+            .timeout(Duration.ofSeconds(config.requestTimeoutSeconds))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer ${config.apiKey}")
             .POST(HttpRequest.BodyPublishers.ofString(requestBody))
@@ -257,6 +273,7 @@ internal fun buildPromptSpec(
         appendLine("Prefer constructor-injected fakes over Android runtime dependencies.")
         appendLine("If information is missing, keep the code honest with TODO() or focused fake implementations instead of inventing APIs.")
         appendLine("When dependency source is provided, preserve its method names, parameter lists, and exact return types in all stubs and mocks.")
+        appendLine("Use `kotlin.test.Test` and `kotlin.test` assertions. Do not use `org.junit.Test`.")
     }
 
     val input = buildString {
@@ -390,7 +407,7 @@ private fun extractOutputText(item: kotlinx.serialization.json.JsonElement): Str
 
 internal fun sanitizeGeneratedKotlin(content: String): String {
     val trimmed = content.trim()
-    return if (trimmed.startsWith("```")) {
+    val sanitized = if (trimmed.startsWith("```")) {
         trimmed
             .removePrefix("```kotlin")
             .removePrefix("```")
@@ -399,6 +416,9 @@ internal fun sanitizeGeneratedKotlin(content: String): String {
     } else {
         trimmed
     }
+    return sanitized
+        .replace("import org.junit.Test", "import kotlin.test.Test")
+        .replace("import org.junit.jupiter.api.Test", "import kotlin.test.Test")
 }
 
 private fun findWorkspaceRoot(start: Path): Path {

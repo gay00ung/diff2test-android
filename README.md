@@ -70,6 +70,8 @@ protocol = "responses-compatible"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5"
 base_url = "https://api.openai.com/v1"
+connect_timeout_seconds = 30
+request_timeout_seconds = 180
 ```
 
 Example for a local or self-hosted Responses-compatible gateway:
@@ -83,6 +85,8 @@ api_key_env = "LLM_API_KEY"
 model = "qwen3-coder-next-mlx"
 base_url = "http://127.0.0.1:12345"
 reasoning_effort = "high"
+connect_timeout_seconds = 30
+request_timeout_seconds = 300
 ```
 
 Then export the key in your shell and run:
