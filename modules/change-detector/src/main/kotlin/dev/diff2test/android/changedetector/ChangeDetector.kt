@@ -7,6 +7,7 @@ import dev.diff2test.android.core.ChangedSymbol
 import dev.diff2test.android.core.SymbolKind
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.math.max
 
 data class ScanRequest(
     val baseRef: String? = "HEAD",
@@ -39,7 +40,7 @@ class GitDiffChangeDetector : ChangeDetector {
             )
         }
 
-        val files = parseGitDiff(stdout)
+        val files = parseGitDiff(stdout, request.workingDirectory)
         val symbolCount = files.sumOf { it.changedSymbols.size }
         val summary = if (files.isEmpty()) {
             "No git diff changes detected."
@@ -69,7 +70,10 @@ internal fun buildGitDiffCommand(request: ScanRequest): List<String> {
     }
 }
 
-internal fun parseGitDiff(diffText: String): List<ChangedFile> {
+internal fun parseGitDiff(
+    diffText: String,
+    workingDirectory: Path = Path.of("."),
+): List<ChangedFile> {
     if (diffText.isBlank()) {
         return emptyList()
     }
@@ -79,6 +83,9 @@ internal fun parseGitDiff(diffText: String): List<ChangedFile> {
     var currentHunks = mutableListOf<String>()
     var currentSymbols = linkedSetOf<ChangedSymbol>()
     var currentHunkLines = mutableListOf<String>()
+    var currentChangedNewLines = linkedSetOf<Int>()
+    var currentNewLine = 0
+    var currentOldLine = 0
 
     fun flushHunk() {
         if (currentHunkLines.isNotEmpty()) {
@@ -90,14 +97,21 @@ internal fun parseGitDiff(diffText: String): List<ChangedFile> {
     fun flushFile() {
         flushHunk()
         val path = currentPath ?: return
+        val sourcePath = if (path.isAbsolute) path else workingDirectory.resolve(path).normalize()
+        val resolvedSymbols = if (path.toString().endsWith(".kt")) {
+            resolveSymbolsFromChangedLines(sourcePath, currentChangedNewLines, currentSymbols)
+        } else {
+            currentSymbols.toList()
+        }
         files += ChangedFile(
             path = path,
             hunks = currentHunks.toList(),
-            changedSymbols = currentSymbols.toList(),
+            changedSymbols = resolvedSymbols,
         )
         currentPath = null
         currentHunks = mutableListOf()
         currentSymbols = linkedSetOf()
+        currentChangedNewLines = linkedSetOf()
     }
 
     diffText.lineSequence().forEach { line ->
@@ -110,22 +124,41 @@ internal fun parseGitDiff(diffText: String): List<ChangedFile> {
             line.startsWith("@@") -> {
                 flushHunk()
                 currentHunkLines += line
+                val (oldStart, newStart) = parseHunkHeader(line)
+                currentOldLine = oldStart
+                currentNewLine = newStart
             }
 
             line.startsWith("+") && !line.startsWith("+++") -> {
                 currentHunkLines += line
                 detectChangedSymbolCandidate(line)?.let(currentSymbols::add)
+                currentChangedNewLines += currentNewLine
+                currentNewLine += 1
             }
 
             line.startsWith("-") && !line.startsWith("---") -> {
                 currentHunkLines += line
                 detectChangedSymbolCandidate(line)?.let(currentSymbols::add)
+                currentOldLine += 1
+            }
+
+            line.startsWith(" ") -> {
+                currentHunkLines += line
+                currentOldLine += 1
+                currentNewLine += 1
             }
         }
     }
 
     flushFile()
     return files
+}
+
+private fun parseHunkHeader(header: String): Pair<Int, Int> {
+    val match = HUNK_PATTERN.find(header) ?: return 0 to 0
+    val oldStart = match.groupValues[1].toInt()
+    val newStart = match.groupValues[2].toInt()
+    return oldStart to newStart
 }
 
 private fun parsePathFromDiffHeader(header: String): Path? {
@@ -154,6 +187,153 @@ fun extractKotlinSymbols(sourcePath: Path): List<ChangedSymbol> {
         return emptyList()
     }
     return extractKotlinSymbols(Files.readString(sourcePath))
+}
+
+internal fun resolveSymbolsFromChangedLines(
+    sourcePath: Path,
+    changedNewLines: Set<Int>,
+    inlineCandidates: Set<ChangedSymbol>,
+): List<ChangedSymbol> {
+    if (!Files.exists(sourcePath)) {
+        return inlineCandidates.toList()
+    }
+
+    val declarations = parseDeclarations(Files.readAllLines(sourcePath))
+    if (declarations.isEmpty() || changedNewLines.isEmpty()) {
+        return inlineCandidates.toList()
+    }
+
+    val resolved = linkedSetOf<ChangedSymbol>()
+    resolved += inlineCandidates
+
+    changedNewLines.forEach { changedLine ->
+        declarations
+            .filter { changedLine in it.startLine..it.endLine }
+            .sortedWith(compareBy<Declaration>({ declarationPriority(it.kind) }, { it.endLine - it.startLine }))
+            .firstOrNull()
+            ?.let { declaration ->
+                resolved += ChangedSymbol(
+                    name = declaration.name,
+                    kind = declaration.kind,
+                    signature = declaration.signature,
+                )
+            }
+    }
+
+    return resolved.toList()
+}
+
+private data class Declaration(
+    val name: String,
+    val kind: SymbolKind,
+    val signature: String,
+    val startLine: Int,
+    var endLine: Int,
+)
+
+private data class OpenDeclaration(
+    val declaration: Declaration,
+    val targetDepth: Int,
+)
+
+private fun parseDeclarations(lines: List<String>): List<Declaration> {
+    val declarations = mutableListOf<Declaration>()
+    val openDeclarations = ArrayDeque<OpenDeclaration>()
+    var braceDepth = 0
+
+    lines.forEachIndexed { index, rawLine ->
+        val lineNumber = index + 1
+        val line = rawLine.trim()
+        val depthBefore = braceDepth
+
+        val declaration = detectDeclaration(line, lineNumber)
+        if (declaration != null) {
+            declarations += declaration
+        }
+
+        braceDepth += countChar(rawLine, '{')
+        braceDepth -= countChar(rawLine, '}')
+        braceDepth = max(0, braceDepth)
+
+        if (declaration != null) {
+            val opensBlock = rawLine.contains("{")
+            if (declaration.kind == SymbolKind.METHOD || declaration.kind == SymbolKind.CLASS) {
+                if (opensBlock) {
+                    openDeclarations.addLast(
+                        OpenDeclaration(
+                            declaration = declaration,
+                            targetDepth = depthBefore,
+                        ),
+                    )
+                } else {
+                    declaration.endLine = lineNumber
+                }
+            } else {
+                declaration.endLine = lineNumber
+            }
+        }
+
+        while (openDeclarations.isNotEmpty() && braceDepth <= openDeclarations.last().targetDepth) {
+            val open = openDeclarations.removeLast()
+            open.declaration.endLine = lineNumber
+        }
+    }
+
+    while (openDeclarations.isNotEmpty()) {
+        val open = openDeclarations.removeLast()
+        open.declaration.endLine = lines.size
+    }
+
+    return declarations
+}
+
+private fun detectDeclaration(line: String, lineNumber: Int): Declaration? {
+    val classMatch = CLASS_PATTERN.find(line)
+    if (classMatch != null) {
+        return Declaration(
+            name = classMatch.groupValues[2],
+            kind = SymbolKind.CLASS,
+            signature = line,
+            startLine = lineNumber,
+            endLine = lineNumber,
+        )
+    }
+
+    val methodMatch = METHOD_PATTERN.find(line)
+    if (methodMatch != null) {
+        return Declaration(
+            name = methodMatch.groupValues[1],
+            kind = SymbolKind.METHOD,
+            signature = line,
+            startLine = lineNumber,
+            endLine = lineNumber,
+        )
+    }
+
+    val propertyMatch = PROPERTY_PATTERN.find(line)
+    if (propertyMatch != null) {
+        val propertyName = propertyMatch.groupValues[1]
+        return Declaration(
+            name = propertyName,
+            kind = if ("state" in propertyName.lowercase()) SymbolKind.STATE else SymbolKind.PROPERTY,
+            signature = line,
+            startLine = lineNumber,
+            endLine = lineNumber,
+        )
+    }
+
+    return null
+}
+
+private fun countChar(line: String, target: Char): Int = line.count { it == target }
+
+private fun declarationPriority(kind: SymbolKind): Int {
+    return when (kind) {
+        SymbolKind.METHOD -> 0
+        SymbolKind.STATE -> 1
+        SymbolKind.PROPERTY -> 2
+        SymbolKind.CLASS -> 3
+    }
 }
 
 private fun detectChangedSymbolCandidate(line: String): ChangedSymbol? {
@@ -199,3 +379,6 @@ private val METHOD_PATTERN =
 
 private val PROPERTY_PATTERN =
     Regex("""^(?:public|private|internal|protected)?\s*(?:override\s+)?(?:lateinit\s+)?(?:val|var)\s+([A-Za-z_][A-Za-z0-9_]*)""")
+
+private val HUNK_PATTERN =
+    Regex("""^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@.*$""")
