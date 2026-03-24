@@ -29,6 +29,7 @@ fun main(args: Array<String>) {
         "scan" -> runScan()
         "plan" -> runPlan(args.getOrNull(1))
         "generate" -> runGenerate(parseGenerateArguments(args.drop(1)))
+        "auto" -> runAuto()
         "verify" -> runVerify(args.getOrNull(1))
         null, "help", "--help", "-h" -> printHelp()
         else -> {
@@ -72,15 +73,26 @@ private fun runPlan(target: String?) {
 
 private fun runGenerate(options: GenerateOptions) {
     val analysis = resolveAnalysis(options.target)
-    val plan = createPlan(analysis)
-    val styleGuide = DefaultStyleIndexer().index(workspaceRoot)
-    val context = DefaultTestContextBuilder().build("app", analysis, styleGuide)
-    val bundle = KotlinUnitTestGenerator().generate(plan, context)
+    val bundle = createBundle(analysis)
 
     if (options.write) {
         writeGeneratedFiles(bundle, analysis.filePath, options.outputRoot)
     } else {
         printPreview(bundle)
+    }
+}
+
+private fun runAuto() {
+    val analyses = resolveChangedAnalyses()
+    check(analyses.isNotEmpty()) {
+        "No changed ViewModel files were detected in the current diff."
+    }
+
+    analyses.forEach { analysis ->
+        val bundle = createBundle(analysis)
+        println("Generating tests for ${analysis.filePath}")
+        writeGeneratedFiles(bundle, analysis.filePath, outputRootOverride = null)
+        println()
     }
 }
 
@@ -109,6 +121,13 @@ private fun createPlan(analysis: ViewModelAnalysis): TestPlan {
     return DefaultTestPlanner().plan(analysis, context, testType)
 }
 
+private fun createBundle(analysis: ViewModelAnalysis): GeneratedTestBundle {
+    val plan = createPlan(analysis)
+    val styleGuide = DefaultStyleIndexer().index(workspaceRoot)
+    val context = DefaultTestContextBuilder().build("app", analysis, styleGuide)
+    return KotlinUnitTestGenerator().generate(plan, context, analysis)
+}
+
 private fun resolveAnalysis(target: String?): ViewModelAnalysis {
     if (target != null) {
         val analyses = StubViewModelAnalyzer().analyze(explicitTargetChangeSet(target))
@@ -118,13 +137,7 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
         return analyses.first()
     }
 
-    val detectedAnalyses = StubViewModelAnalyzer().analyze(
-        GitDiffChangeDetector().scan(
-            request = dev.diff2test.android.changedetector.ScanRequest(
-                workingDirectory = workspaceRoot,
-            ),
-        ),
-    )
+    val detectedAnalyses = resolveChangedAnalyses()
     if (detectedAnalyses.isNotEmpty()) {
         return detectedAnalyses.first()
     }
@@ -132,8 +145,19 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
     return StubViewModelAnalyzer().analyze(explicitTargetChangeSet("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt")).first()
 }
 
+private fun resolveChangedAnalyses(): List<ViewModelAnalysis> {
+    return StubViewModelAnalyzer().analyze(
+        GitDiffChangeDetector().scan(
+            request = dev.diff2test.android.changedetector.ScanRequest(
+                workingDirectory = workspaceRoot,
+            ),
+        ),
+    )
+}
+
 private fun explicitTargetChangeSet(target: String): ChangeSet {
-    val path = workspaceRoot.resolve(target).normalize()
+    val rawPath = Path.of(target)
+    val path = if (rawPath.isAbsolute) rawPath.normalize() else workspaceRoot.resolve(target).normalize()
     val symbols = if (Files.exists(path)) {
         extractKotlinSymbols(path)
     } else {
@@ -252,5 +276,6 @@ private fun printHelp() {
     println("  scan")
     println("  plan [path-to-viewmodel]")
     println("  generate [path-to-viewmodel] [--write] [--output-root path]")
+    println("  auto")
     println("  verify [gradle-task]")
 }

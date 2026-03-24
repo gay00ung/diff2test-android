@@ -63,14 +63,18 @@ data class TargetMethod(
     val isPublic: Boolean = true,
     val isSuspend: Boolean = false,
     val mutatesState: Boolean = false,
+    val body: String? = null,
 )
 
 data class ViewModelAnalysis(
     val className: String,
+    val packageName: String = "",
     val filePath: Path,
     val constructorDependencies: List<CollaboratorDependency> = emptyList(),
     val publicMethods: List<TargetMethod> = emptyList(),
     val stateHolders: List<String> = emptyList(),
+    val primaryStateHolderName: String? = null,
+    val primaryStateType: String? = null,
     val androidFrameworkTouchpoints: List<String> = emptyList(),
     val notes: List<String> = emptyList(),
 )
@@ -160,4 +164,3 @@ data class PolicyDecision(
     val maxRetries: Int,
     val rationale: String,
 )
-
