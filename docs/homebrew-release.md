@@ -64,6 +64,8 @@ There are now two automation layers:
 - `tag-release.yml` watches pushes to `main` and decides whether a new release tag should be created
 - `release.yml` builds and publishes the release after a tag exists
 
+When `tag-release.yml` creates a tag automatically, it also dispatches `release.yml` directly. This avoids the GitHub Actions limitation where tags created by `GITHUB_TOKEN` do not automatically trigger another workflow from the resulting push event.
+
 The release workflow triggers on:
 
 - tag pushes like `v0.2.0`
@@ -118,9 +120,10 @@ For now, the cleanest flow is:
 1. Merge the release branch into `main`
 2. Update the project version in the PR to the intended release version
 3. Let `tag-release.yml` create the next tag automatically
-4. Let `release.yml` publish `d2t.zip`
-5. If `HOMEBREW_TAP_TOKEN` is configured, let the workflow update the tap repo automatically
-6. If the token is not configured, update the tap repo manually
+4. Let `tag-release.yml` dispatch `release.yml`
+5. Let `release.yml` publish `d2t.zip`
+6. If `HOMEBREW_TAP_TOKEN` is configured, let the workflow update the tap repo automatically
+7. If the token is not configured, update the tap repo manually
 
 ## Manual Release Steps
 
