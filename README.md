@@ -58,7 +58,7 @@ The repository is organized into three layers:
 The 1.0 promise should stay narrow:
 
 - CLI for diff-driven Android ViewModel local unit test generation and verification
-- bring-your-own API key with Responses-compatible AI endpoints
+- bring-your-own API key with OpenAI, Anthropic, Gemini, or Responses-compatible gateways
 - release ZIP and Homebrew distribution
 
 The current roadmap for that work lives in [`docs/roadmap-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/roadmap-1.0.md), and the final release gate is tracked in [`docs/release-gate-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/release-gate-1.0.md).
@@ -78,7 +78,6 @@ The current roadmap for that work lives in [`docs/roadmap-1.0.md`](/Users/shinga
 - transport-bound MCP server behavior
 - instrumented `androidTest` generation
 - Compose UI test generation
-- native Anthropic `messages` transport
 - end-to-end automatic repair loop
 - non-heuristic Kotlin analysis for the primary path
 
@@ -233,8 +232,7 @@ apps/cli/build/distributions/d2t.zip
 ## Current Limitations
 
 - The Kotlin analyzer is PSI-backed, but still lacks symbol resolution for full production fidelity.
-- AI generation currently supports Responses-compatible endpoints only.
-- Native Anthropic and Gemini adapters are not implemented yet.
+- AI generation supports the OpenAI Responses API, the Anthropic Messages API, the Gemini GenerateContent API, and Responses-compatible gateways.
 - Repair is still bounded and only covers common generated-test import or coroutine utility failures.
 - The MCP app is experimental and not yet a real transport-bound server.
 

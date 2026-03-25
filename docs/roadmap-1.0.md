@@ -53,7 +53,7 @@ Everything outside that scope should stay clearly marked as experimental or post
 - [ ] Keep Responses-compatible support reliable and well messaged
 - [ ] Make provider and timeout failures actionable
 - [ ] Keep AI progress logging concise and useful
-- [ ] Decide whether native Anthropic or Gemini adapters are 1.0 goals or explicitly post-1.0
+- [x] Support native Anthropic and Gemini adapters alongside Responses-compatible gateways
 
 ## 7. Fixture and Validation Matrix
 

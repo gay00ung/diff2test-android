@@ -9,6 +9,7 @@ import org.tomlj.TomlParseResult
 enum class AiProvider {
     OPENAI,
     ANTHROPIC,
+    GEMINI,
     CUSTOM,
     DISABLED,
 }
@@ -16,6 +17,7 @@ enum class AiProvider {
 enum class AiProtocol {
     RESPONSES_COMPATIBLE,
     ANTHROPIC_MESSAGES,
+    GEMINI_GENERATE_CONTENT,
 }
 
 data class D2tAiConfig(
@@ -127,6 +129,7 @@ private fun parseProvider(rawValue: String?): AiProvider {
         null, "" -> AiProvider.OPENAI
         "openai" -> AiProvider.OPENAI
         "anthropic" -> AiProvider.ANTHROPIC
+        "gemini" -> AiProvider.GEMINI
         "custom" -> AiProvider.CUSTOM
         "disabled" -> AiProvider.DISABLED
         else -> error("Unsupported ai.provider value: $rawValue")
@@ -138,6 +141,8 @@ private fun parseProtocol(rawValue: String?, provider: AiProvider): AiProtocol {
         null, "" -> defaultProtocolFor(provider)
         "responses-compatible", "responses_compatible", "responses" -> AiProtocol.RESPONSES_COMPATIBLE
         "anthropic-messages", "anthropic_messages", "messages" -> AiProtocol.ANTHROPIC_MESSAGES
+        "gemini-generate-content", "gemini_generate_content", "generate-content", "generate_content" ->
+            AiProtocol.GEMINI_GENERATE_CONTENT
         else -> error("Unsupported ai.protocol value: $rawValue")
     }
 }
@@ -145,6 +150,7 @@ private fun parseProtocol(rawValue: String?, provider: AiProvider): AiProtocol {
 private fun defaultProtocolFor(provider: AiProvider): AiProtocol {
     return when (provider) {
         AiProvider.ANTHROPIC -> AiProtocol.ANTHROPIC_MESSAGES
+        AiProvider.GEMINI -> AiProtocol.GEMINI_GENERATE_CONTENT
         else -> AiProtocol.RESPONSES_COMPATIBLE
     }
 }
@@ -153,6 +159,7 @@ private fun defaultApiKeyEnvFor(provider: AiProvider): String? {
     return when (provider) {
         AiProvider.OPENAI -> "OPENAI_API_KEY"
         AiProvider.ANTHROPIC -> "ANTHROPIC_API_KEY"
+        AiProvider.GEMINI -> "GEMINI_API_KEY"
         AiProvider.CUSTOM, AiProvider.DISABLED -> null
     }
 }
@@ -161,6 +168,7 @@ private fun defaultBaseUrlFor(provider: AiProvider): String? {
     return when (provider) {
         AiProvider.OPENAI -> "https://api.openai.com/v1"
         AiProvider.ANTHROPIC -> "https://api.anthropic.com/v1"
+        AiProvider.GEMINI -> "https://generativelanguage.googleapis.com/v1beta"
         AiProvider.CUSTOM, AiProvider.DISABLED -> null
     }
 }
@@ -187,8 +195,14 @@ internal fun resolveAiConfiguration(
         apiKeyEnv == null -> "Set ai.api_key_env in config.toml."
         !apiKeyPresent -> "Environment variable `$apiKeyEnv` is not set."
         model == null -> "Set ai.model in config.toml or pass --model."
-        ai.protocol != AiProtocol.RESPONSES_COMPATIBLE ->
-            "Provider `${ai.provider.name.lowercase()}` uses `${ai.protocol.name.lowercase()}` which is not implemented yet. Native Anthropic and Gemini adapters are not implemented yet. Use `provider = \"custom\"` with `protocol = \"responses-compatible\"` for a compatible gateway."
+        ai.provider == AiProvider.OPENAI && ai.protocol != AiProtocol.RESPONSES_COMPATIBLE ->
+            "Provider `openai` requires `protocol = \"responses-compatible\"`."
+        ai.provider == AiProvider.CUSTOM && ai.protocol != AiProtocol.RESPONSES_COMPATIBLE ->
+            "Provider `custom` requires `protocol = \"responses-compatible\"`."
+        ai.provider == AiProvider.ANTHROPIC && ai.protocol != AiProtocol.ANTHROPIC_MESSAGES ->
+            "Provider `anthropic` requires `protocol = \"anthropic-messages\"`."
+        ai.provider == AiProvider.GEMINI && ai.protocol != AiProtocol.GEMINI_GENERATE_CONTENT ->
+            "Provider `gemini` requires `protocol = \"gemini-generate-content\"`."
         baseUrl.isNullOrBlank() -> "Set ai.base_url in config.toml."
         else -> null
     }
@@ -234,6 +248,7 @@ internal fun defaultModelFor(provider: AiProvider): String? {
     return when (provider) {
         AiProvider.OPENAI -> "gpt-5"
         AiProvider.ANTHROPIC -> "claude-sonnet-4-5"
+        AiProvider.GEMINI -> "gemini-2.5-pro"
         AiProvider.CUSTOM, AiProvider.DISABLED -> null
     }
 }
@@ -289,8 +304,9 @@ fun defaultConfigTemplate(): String {
 enabled = true
 
 # `openai` works out of the box with the official OpenAI Responses API.
+# `anthropic` uses the native Anthropic Messages API.
+# `gemini` uses the native Gemini GenerateContent API.
 # `custom` is for self-hosted or gateway endpoints that expose a Responses-compatible API.
-# `anthropic` is reserved for a future native adapter; use `custom` if your Anthropic-style or Gemini-style gateway is Responses-compatible.
 provider = "openai"
 protocol = "responses-compatible"
 
@@ -302,6 +318,22 @@ base_url = "https://api.openai.com/v1"
 # reasoning_effort = "high"
 # connect_timeout_seconds = 30
 # request_timeout_seconds = 180
+
+# Example for the native Anthropic Messages API:
+# provider = "anthropic"
+# protocol = "anthropic-messages"
+# api_key_env = "ANTHROPIC_API_KEY"
+# model = "claude-sonnet-4-5"
+# base_url = "https://api.anthropic.com/v1"
+# request_timeout_seconds = 300
+
+# Example for the native Gemini GenerateContent API:
+# provider = "gemini"
+# protocol = "gemini-generate-content"
+# api_key_env = "GEMINI_API_KEY"
+# model = "gemini-2.5-pro"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+# request_timeout_seconds = 300
 
 # Example for a local or self-hosted Responses-compatible server:
 # provider = "custom"

@@ -82,6 +82,7 @@ class D2tConfigTest {
                     protocol = AiProtocol.ANTHROPIC_MESSAGES,
                     apiKeyEnv = "ANTHROPIC_API_KEY",
                     model = "claude-sonnet-4-5",
+                    baseUrl = "https://api.anthropic.com/v1",
                 ),
             ),
         )
@@ -90,9 +91,31 @@ class D2tConfigTest {
         val report = renderDoctorReport(loadResult, resolved)
 
         assertContains(report, "Provider: anthropic")
-        assertContains(report, "Supported now: no")
-        assertContains(report, "Use `provider = \"custom\"`")
-        assertContains(report, "Native Anthropic and Gemini adapters are not implemented yet.")
+        assertContains(report, "Protocol: anthropic_messages")
+        assertContains(report, "Supported now: yes")
+    }
+
+    @Test
+    fun `doctor report supports native gemini protocol`() {
+        val loadResult = ConfigLoadResult.Loaded(
+            path = defaultConfigPath(),
+            config = D2tConfig(
+                ai = D2tAiConfig(
+                    provider = AiProvider.GEMINI,
+                    protocol = AiProtocol.GEMINI_GENERATE_CONTENT,
+                    apiKeyEnv = "GEMINI_API_KEY",
+                    model = "gemini-2.5-pro",
+                    baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+                ),
+            ),
+        )
+
+        val resolved = resolveAiConfiguration(loadResult, mapOf("GEMINI_API_KEY" to "sk-local"))
+        val report = renderDoctorReport(loadResult, resolved)
+
+        assertContains(report, "Provider: gemini")
+        assertContains(report, "Protocol: gemini_generate_content")
+        assertContains(report, "Supported now: yes")
     }
 
     @Test

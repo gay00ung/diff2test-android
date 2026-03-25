@@ -31,6 +31,23 @@ data class ResponsesApiConfig(
     val requestTimeoutSeconds: Long = 180,
 )
 
+data class AnthropicMessagesConfig(
+    val apiKey: String,
+    val model: String,
+    val baseUrl: String,
+    val maxTokens: Int = 4_096,
+    val connectTimeoutSeconds: Long = 30,
+    val requestTimeoutSeconds: Long = 180,
+)
+
+data class GeminiGenerateContentConfig(
+    val apiKey: String,
+    val model: String,
+    val baseUrl: String,
+    val connectTimeoutSeconds: Long = 30,
+    val requestTimeoutSeconds: Long = 180,
+)
+
 enum class AiFailureMode {
     FALLBACK_TO_HEURISTIC,
     FAIL_CLOSED,
@@ -192,6 +209,163 @@ class ResponsesApiTestGenerator(
     }
 }
 
+class AnthropicMessagesTestGenerator(
+    private val config: AnthropicMessagesConfig,
+    private val fallback: TestGenerator = KotlinUnitTestGenerator(),
+    private val failureMode: AiFailureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
+    private val httpClient: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(config.connectTimeoutSeconds))
+        .build(),
+) : TestGenerator {
+    override fun generate(
+        plan: TestPlan,
+        context: TestContext,
+        analysis: ViewModelAnalysis,
+    ): GeneratedTestBundle {
+        val startedAt = System.nanoTime()
+        return try {
+            val promptSpec = buildPromptSpec(plan, context, analysis)
+            val requestBody = buildAnthropicMessagesRequest(config, promptSpec.instructions, promptSpec.input)
+            logAiProgress(
+                "request started: model=${config.model}, url=${config.baseUrl}/messages, " +
+                    "instructions=${promptSpec.instructions.length} chars, input=${promptSpec.input.length} chars, " +
+                    "body=${requestBody.length} chars, timeout=${config.requestTimeoutSeconds}s",
+            )
+            val responseBody = executeAnthropicMessagesRequest(requestBody)
+            logAiProgress(
+                "response received: ${responseBody.length} chars in ${elapsedMillis(startedAt)}ms; parsing structured payload",
+            )
+            val payload = extractAnthropicStructuredPayload(responseBody)
+            logAiProgress(
+                "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
+            )
+
+            GeneratedTestBundle(
+                plan = plan,
+                files = listOf(
+                    GeneratedFile(
+                        relativePath = generatedTestRelativePath(plan, analysis),
+                        content = sanitizeGeneratedKotlin(payload.content),
+                    ),
+                ),
+                warnings = payload.warnings,
+            )
+        } catch (error: Exception) {
+            logAiProgress(
+                "request failed after ${elapsedMillis(startedAt)}ms: ${error.message ?: error::class.simpleName}",
+            )
+            if (failureMode == AiFailureMode.FAIL_CLOSED) {
+                throw IllegalStateException(
+                    "AI generation failed: ${error.message ?: error::class.simpleName}",
+                    error,
+                )
+            }
+            val fallbackBundle = fallback.generate(plan, context, analysis)
+            fallbackBundle.copy(
+                warnings = listOf(
+                    "AI generation failed: ${error.message ?: error::class.simpleName}. Falling back to heuristic generation.",
+                ) + fallbackBundle.warnings,
+            )
+        }
+    }
+
+    private fun executeAnthropicMessagesRequest(requestBody: String): String {
+        logAiProgress("waiting for response...")
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("${config.baseUrl}/messages"))
+            .timeout(Duration.ofSeconds(config.requestTimeoutSeconds))
+            .header("Content-Type", "application/json")
+            .header("x-api-key", config.apiKey)
+            .header("anthropic-version", "2023-06-01")
+            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+            .build()
+
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        check(response.statusCode() in 200..299) {
+            "Anthropic Messages request failed with HTTP ${response.statusCode()}: ${response.body()}"
+        }
+        return response.body()
+    }
+}
+
+class GeminiGenerateContentTestGenerator(
+    private val config: GeminiGenerateContentConfig,
+    private val fallback: TestGenerator = KotlinUnitTestGenerator(),
+    private val failureMode: AiFailureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
+    private val httpClient: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(config.connectTimeoutSeconds))
+        .build(),
+) : TestGenerator {
+    override fun generate(
+        plan: TestPlan,
+        context: TestContext,
+        analysis: ViewModelAnalysis,
+    ): GeneratedTestBundle {
+        val startedAt = System.nanoTime()
+        return try {
+            val promptSpec = buildPromptSpec(plan, context, analysis)
+            val requestBody = buildGeminiGenerateContentRequest(config, promptSpec.instructions, promptSpec.input)
+            logAiProgress(
+                "request started: model=${config.model}, url=${config.baseUrl}/models/${config.model}:generateContent, " +
+                    "instructions=${promptSpec.instructions.length} chars, input=${promptSpec.input.length} chars, " +
+                    "body=${requestBody.length} chars, timeout=${config.requestTimeoutSeconds}s",
+            )
+            val responseBody = executeGeminiGenerateContentRequest(requestBody)
+            logAiProgress(
+                "response received: ${responseBody.length} chars in ${elapsedMillis(startedAt)}ms; parsing structured payload",
+            )
+            val payload = extractGeminiStructuredPayload(responseBody)
+            logAiProgress(
+                "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
+            )
+
+            GeneratedTestBundle(
+                plan = plan,
+                files = listOf(
+                    GeneratedFile(
+                        relativePath = generatedTestRelativePath(plan, analysis),
+                        content = sanitizeGeneratedKotlin(payload.content),
+                    ),
+                ),
+                warnings = payload.warnings,
+            )
+        } catch (error: Exception) {
+            logAiProgress(
+                "request failed after ${elapsedMillis(startedAt)}ms: ${error.message ?: error::class.simpleName}",
+            )
+            if (failureMode == AiFailureMode.FAIL_CLOSED) {
+                throw IllegalStateException(
+                    "AI generation failed: ${error.message ?: error::class.simpleName}",
+                    error,
+                )
+            }
+            val fallbackBundle = fallback.generate(plan, context, analysis)
+            fallbackBundle.copy(
+                warnings = listOf(
+                    "AI generation failed: ${error.message ?: error::class.simpleName}. Falling back to heuristic generation.",
+                ) + fallbackBundle.warnings,
+            )
+        }
+    }
+
+    private fun executeGeminiGenerateContentRequest(requestBody: String): String {
+        logAiProgress("waiting for response...")
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("${config.baseUrl}/models/${config.model}:generateContent"))
+            .timeout(Duration.ofSeconds(config.requestTimeoutSeconds))
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", config.apiKey)
+            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+            .build()
+
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        check(response.statusCode() in 200..299) {
+            "Gemini GenerateContent request failed with HTTP ${response.statusCode()}: ${response.body()}"
+        }
+        return response.body()
+    }
+}
+
 private fun logAiProgress(message: String) {
     println("[ai] $message")
 }
@@ -205,42 +379,6 @@ internal fun buildResponsesRequest(
     instructions: String,
     input: String,
 ): String {
-    val schema = buildJsonObject {
-        put("type", "object")
-        put(
-            "properties",
-            buildJsonObject {
-                put(
-                    "content",
-                    buildJsonObject {
-                        put("type", "string")
-                        put("minLength", 1)
-                    },
-                )
-                put(
-                    "warnings",
-                    buildJsonObject {
-                        put("type", "array")
-                        put(
-                            "items",
-                            buildJsonObject {
-                                put("type", "string")
-                            },
-                        )
-                    },
-                )
-            },
-        )
-        put(
-            "required",
-            buildJsonArray {
-                add(JsonPrimitive("content"))
-                add(JsonPrimitive("warnings"))
-            },
-        )
-        put("additionalProperties", false)
-    }
-
     return buildJsonObject {
         put("model", config.model)
         put("store", false)
@@ -255,7 +393,7 @@ internal fun buildResponsesRequest(
                         put("type", "json_schema")
                         put("name", "generated_viewmodel_test")
                         put("strict", true)
-                        put("schema", schema)
+                        put("schema", structuredPayloadSchema())
                     },
                 )
             },
@@ -268,6 +406,91 @@ internal fun buildResponsesRequest(
                 },
             )
         }
+    }.toString()
+}
+
+internal fun buildAnthropicMessagesRequest(
+    config: AnthropicMessagesConfig,
+    instructions: String,
+    input: String,
+): String {
+    return buildJsonObject {
+        put("model", config.model)
+        put("max_tokens", config.maxTokens)
+        put("temperature", 0)
+        put("system", "$instructions\nReturn valid JSON only.")
+        put(
+            "messages",
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("role", "user")
+                        put(
+                            "content",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "text")
+                                        put("text", input)
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+        )
+    }.toString()
+}
+
+internal fun buildGeminiGenerateContentRequest(
+    config: GeminiGenerateContentConfig,
+    instructions: String,
+    input: String,
+): String {
+    return buildJsonObject {
+        put(
+            "system_instruction",
+            buildJsonObject {
+                put(
+                    "parts",
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("text", "$instructions\nReturn valid JSON only.")
+                            },
+                        )
+                    },
+                )
+            },
+        )
+        put(
+            "contents",
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("role", "user")
+                        put(
+                            "parts",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put("text", input)
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+        )
+        put(
+            "generationConfig",
+            buildJsonObject {
+                put("responseMimeType", "application/json")
+                put("responseSchema", structuredPayloadSchema())
+            },
+        )
     }.toString()
 }
 
@@ -414,7 +637,46 @@ internal fun extractStructuredPayload(responseBody: String): StructuredTestPaylo
         ?: root["output"]?.jsonArray?.firstNotNullOfOrNull(::extractOutputText)
         ?: error("OpenAI response did not include output text.")
 
-    val payload = Json.parseToJsonElement(text).jsonObject
+    return extractStructuredPayloadFromText(text)
+}
+
+internal fun extractAnthropicStructuredPayload(responseBody: String): StructuredTestPayload {
+    val root = Json.parseToJsonElement(responseBody).jsonObject
+    val text = root["content"]?.jsonArray
+        ?.firstNotNullOfOrNull { item ->
+            val itemObject = item.jsonObject
+            if (itemObject["type"]?.jsonPrimitive?.contentOrNull == "text") {
+                itemObject["text"]?.jsonPrimitive?.contentOrNull
+            } else {
+                null
+            }
+        }
+        ?: error("Anthropic response did not include text content.")
+
+    return extractStructuredPayloadFromText(text)
+}
+
+internal fun extractGeminiStructuredPayload(responseBody: String): StructuredTestPayload {
+    val root = Json.parseToJsonElement(responseBody).jsonObject
+    val text = root["candidates"]?.jsonArray
+        ?.firstOrNull()
+        ?.jsonObject
+        ?.get("content")
+        ?.jsonObject
+        ?.get("parts")
+        ?.jsonArray
+        ?.firstNotNullOfOrNull { part ->
+            part.jsonObject["text"]?.jsonPrimitive?.contentOrNull
+        }
+        ?: error("Gemini response did not include text content.")
+
+    return extractStructuredPayloadFromText(text)
+}
+
+internal fun extractStructuredPayloadFromText(text: String): StructuredTestPayload {
+    val normalizedText = sanitizeGeneratedJson(text)
+
+    val payload = Json.parseToJsonElement(normalizedText).jsonObject
     val content = payload["content"]?.jsonPrimitive?.contentOrNull
         ?: error("Structured payload did not include `content`.")
     val warnings = payload["warnings"]?.jsonArray
@@ -425,6 +687,42 @@ internal fun extractStructuredPayload(responseBody: String): StructuredTestPaylo
         content = sanitizeGeneratedKotlin(content),
         warnings = warnings,
     )
+}
+
+internal fun structuredPayloadSchema() = buildJsonObject {
+    put("type", "object")
+    put(
+        "properties",
+        buildJsonObject {
+            put(
+                "content",
+                buildJsonObject {
+                    put("type", "string")
+                    put("minLength", 1)
+                },
+            )
+            put(
+                "warnings",
+                buildJsonObject {
+                    put("type", "array")
+                    put(
+                        "items",
+                        buildJsonObject {
+                            put("type", "string")
+                        },
+                    )
+                },
+            )
+        },
+    )
+    put(
+        "required",
+        buildJsonArray {
+            add(JsonPrimitive("content"))
+            add(JsonPrimitive("warnings"))
+        },
+    )
+    put("additionalProperties", false)
 }
 
 internal fun generatedTestRelativePath(plan: TestPlan, analysis: ViewModelAnalysis): Path {
@@ -455,6 +753,19 @@ internal fun sanitizeGeneratedKotlin(content: String): String {
     return sanitized
         .replace("import org.junit.Test", "import kotlin.test.Test")
         .replace("import org.junit.jupiter.api.Test", "import kotlin.test.Test")
+}
+
+internal fun sanitizeGeneratedJson(content: String): String {
+    val trimmed = content.trim()
+    return if (trimmed.startsWith("```")) {
+        trimmed
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+    } else {
+        trimmed
+    }
 }
 
 private fun findWorkspaceRoot(start: Path): Path {

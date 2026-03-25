@@ -72,6 +72,91 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `builds anthropic messages request with system and user content`() {
+        val requestBody = buildAnthropicMessagesRequest(
+            config = AnthropicMessagesConfig(
+                apiKey = "sk-ant",
+                model = "claude-sonnet-4-5",
+                baseUrl = "https://api.anthropic.com/v1",
+            ),
+            instructions = "Generate tests",
+            input = "input",
+        )
+
+        assertContains(requestBody, "\"model\":\"claude-sonnet-4-5\"")
+        assertContains(requestBody, "\"system\":\"Generate tests\\nReturn valid JSON only.\"")
+        assertContains(requestBody, "\"messages\"")
+        assertContains(requestBody, "\"role\":\"user\"")
+    }
+
+    @Test
+    fun `extracts structured payload from anthropic response body`() {
+        val responseBody = """
+            {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"content\":\"package com.example.auth\\n\\nclass SignUpViewModelGeneratedTest\",\"warnings\":[\"anthropic\"]}"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = extractAnthropicStructuredPayload(responseBody)
+
+        assertEquals(
+            "package com.example.auth\n\nclass SignUpViewModelGeneratedTest",
+            payload.content,
+        )
+        assertEquals(listOf("anthropic"), payload.warnings)
+    }
+
+    @Test
+    fun `builds gemini generate content request with response schema`() {
+        val requestBody = buildGeminiGenerateContentRequest(
+            config = GeminiGenerateContentConfig(
+                apiKey = "sk-gem",
+                model = "gemini-2.5-pro",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+            ),
+            instructions = "Generate tests",
+            input = "input",
+        )
+
+        assertContains(requestBody, "\"system_instruction\"")
+        assertContains(requestBody, "\"responseMimeType\":\"application/json\"")
+        assertContains(requestBody, "\"responseSchema\"")
+        assertContains(requestBody, "\"contents\"")
+    }
+
+    @Test
+    fun `extracts structured payload from gemini response body`() {
+        val responseBody = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"content\":\"package com.example.auth\\n\\nclass SignUpViewModelGeneratedTest\",\"warnings\":[\"gemini\"]}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val payload = extractGeminiStructuredPayload(responseBody)
+
+        assertEquals(
+            "package com.example.auth\n\nclass SignUpViewModelGeneratedTest",
+            payload.content,
+        )
+        assertEquals(listOf("gemini"), payload.warnings)
+    }
+
+    @Test
     fun `normalizes junit test imports to kotlin test`() {
         val content = """
             package com.example.auth
