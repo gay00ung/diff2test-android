@@ -1,9 +1,16 @@
 package dev.diff2test.android.cli
 
 import dev.diff2test.android.core.GradleRunRequest
+import dev.diff2test.android.core.GeneratedTestBundle
+import dev.diff2test.android.core.RepairAttempt
 import dev.diff2test.android.core.TestPlan
 import dev.diff2test.android.core.ViewModelAnalysis
+import dev.diff2test.android.gradlerunner.GradleRunner
+import dev.diff2test.android.gradlerunner.JvmGradleRunner
+import dev.diff2test.android.testgenerator.FileSystemGeneratedTestWriter
 import dev.diff2test.android.testgenerator.inferModuleRootFromTarget
+import dev.diff2test.android.testrepair.BoundedRepairer
+import dev.diff2test.android.testrepair.TestRepairer
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -12,6 +19,13 @@ internal data class GeneratedTestTarget(
     val filePath: Path,
     val testFilter: String,
     val gradleTask: String,
+)
+
+internal data class GeneratedTestVerification(
+    val target: GeneratedTestTarget,
+    val initialResult: dev.diff2test.android.core.ExecutionResult,
+    val finalResult: dev.diff2test.android.core.ExecutionResult,
+    val repairAttempt: RepairAttempt? = null,
 )
 
 internal fun inferGeneratedTestTarget(
@@ -66,6 +80,55 @@ internal fun requireGeneratedTestFile(target: GeneratedTestTarget) {
     check(Files.exists(target.filePath)) {
         "Generated test file not found: ${target.filePath}. Run `generate --write` or `auto` first."
     }
+}
+
+internal fun verifyGeneratedBundle(
+    analysis: ViewModelAnalysis,
+    bundle: GeneratedTestBundle,
+    gradleRunner: GradleRunner = JvmGradleRunner(),
+    repairer: TestRepairer = BoundedRepairer(),
+    attemptRepair: Boolean = false,
+): GeneratedTestVerification {
+    val target = inferGeneratedTestTarget(analysis, bundle.plan)
+    requireGeneratedTestFile(target)
+
+    val initialResult = gradleRunner.run(createVerifyRequest(target))
+    if (initialResult.status != dev.diff2test.android.core.ExecutionStatus.FAILED || !attemptRepair) {
+        return GeneratedTestVerification(
+            target = target,
+            initialResult = initialResult,
+            finalResult = initialResult,
+        )
+    }
+
+    val repairAttempt = repairer.repair(
+        plan = bundle.plan,
+        bundle = bundle,
+        failure = initialResult,
+        attemptNumber = 1,
+    )
+
+    if (!repairAttempt.applied) {
+        return GeneratedTestVerification(
+            target = target,
+            initialResult = initialResult,
+            finalResult = initialResult,
+            repairAttempt = repairAttempt,
+        )
+    }
+
+    FileSystemGeneratedTestWriter().write(
+        bundle.copy(files = repairAttempt.updatedFiles),
+        target.moduleRoot,
+    )
+
+    val finalResult = gradleRunner.run(createVerifyRequest(target))
+    return GeneratedTestVerification(
+        target = target,
+        initialResult = initialResult,
+        finalResult = finalResult,
+        repairAttempt = repairAttempt,
+    )
 }
 
 private fun findBuildRoot(start: Path): Path {

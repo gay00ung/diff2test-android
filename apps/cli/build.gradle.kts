@@ -15,6 +15,7 @@ dependencies {
     implementation(projects.modules.testClassifier)
     implementation(projects.modules.testPlanner)
     implementation(projects.modules.testGenerator)
+    implementation(projects.modules.testRepair)
     implementation(projects.modules.gradleRunner)
     implementation(projects.modules.styleIndex)
     implementation(projects.modules.policyEngine)

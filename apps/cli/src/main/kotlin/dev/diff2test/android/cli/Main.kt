@@ -15,7 +15,7 @@ import dev.diff2test.android.core.TestPlan
 import dev.diff2test.android.core.TestType
 import dev.diff2test.android.core.ViewModelAnalysis
 import dev.diff2test.android.gradlerunner.JvmGradleRunner
-import dev.diff2test.android.kotlinanalyzer.StubViewModelAnalyzer
+import dev.diff2test.android.kotlinanalyzer.SourceBackedViewModelAnalyzer
 import dev.diff2test.android.policy.DefaultPolicyEngine
 import dev.diff2test.android.styleindex.DefaultStyleIndexer
 import dev.diff2test.android.testclassifier.DefaultTestClassifier
@@ -117,13 +117,31 @@ private fun runAuto(options: AutoOptions) {
         "No changed ViewModel files were detected in the current diff."
     }
     val generator = createGenerator(options.aiPreference, options.model, options.strictAi)
+    val verificationFailures = mutableListOf<String>()
 
     analyses.forEach { analysis ->
         println("Generating tests for ${analysis.filePath}")
         printAnalysisWarnings(analysis)
         val bundle = createBundle(analysis, generator)
         writeGeneratedFiles(bundle, analysis.filePath, outputRootOverride = null)
+
+        if (options.verifyAfterGenerate) {
+            val verification = verifyGeneratedBundle(
+                analysis = analysis,
+                bundle = bundle,
+                attemptRepair = options.repairOnFailure,
+            )
+            printGeneratedVerification(verification)
+            if (verification.finalResult.status != dev.diff2test.android.core.ExecutionStatus.PASSED) {
+                verificationFailures += "${analysis.className} -> ${verification.target.testFilter}"
+            }
+        }
+
         println()
+    }
+
+    check(verificationFailures.isEmpty()) {
+        "Auto generation completed but verification failed for: ${verificationFailures.joinToString()}"
     }
 }
 
@@ -192,9 +210,9 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
         check(Files.exists(requestedPath)) {
             "Target file does not exist: $requestedPath"
         }
-        val analyses = StubViewModelAnalyzer().analyze(explicitTargetChangeSet(target))
+        val analyses = SourceBackedViewModelAnalyzer().analyze(explicitTargetChangeSet(target))
         check(analyses.isNotEmpty()) {
-            "The current stub analyzer expects a path ending with ViewModel.kt."
+            "The source-backed analyzer expects a path ending with ViewModel.kt."
         }
         return analyses.first()
     }
@@ -208,7 +226,7 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
 }
 
 private fun resolveChangedAnalyses(): List<ViewModelAnalysis> {
-    return StubViewModelAnalyzer().analyze(
+    return SourceBackedViewModelAnalyzer().analyze(
         GitDiffChangeDetector().scan(
             request = dev.diff2test.android.changedetector.ScanRequest(
                 workingDirectory = workspaceRoot,
@@ -323,6 +341,8 @@ private data class AutoOptions(
     val aiPreference: AiPreference,
     val model: String?,
     val strictAi: Boolean,
+    val verifyAfterGenerate: Boolean,
+    val repairOnFailure: Boolean,
 )
 
 private enum class AiPreference {
@@ -390,6 +410,8 @@ private fun parseAutoArguments(arguments: List<String>): AutoOptions {
     var aiPreference = AiPreference.AUTO
     var model: String? = null
     var strictAi = false
+    var verifyAfterGenerate = true
+    var repairOnFailure = false
     var index = 0
 
     while (index < arguments.size) {
@@ -397,6 +419,8 @@ private fun parseAutoArguments(arguments: List<String>): AutoOptions {
             "--ai" -> aiPreference = AiPreference.ENABLED
             "--strict-ai" -> strictAi = true
             "--no-ai" -> aiPreference = AiPreference.DISABLED
+            "--no-verify" -> verifyAfterGenerate = false
+            "--repair" -> repairOnFailure = true
             "--model" -> {
                 model = arguments.getOrNull(index + 1)
                     ?: error("--model requires a model value")
@@ -412,6 +436,8 @@ private fun parseAutoArguments(arguments: List<String>): AutoOptions {
         aiPreference = aiPreference,
         model = model,
         strictAi = strictAi,
+        verifyAfterGenerate = verifyAfterGenerate,
+        repairOnFailure = repairOnFailure,
     )
 }
 
@@ -485,6 +511,19 @@ private fun printHelp() {
     println(renderHelpText())
 }
 
+private fun printGeneratedVerification(verification: GeneratedTestVerification) {
+    println("Verification target: ${verification.target.filePath}")
+    println("Verification command: ${verification.finalResult.command.joinToString(" ")}")
+    verification.repairAttempt?.let { repair ->
+        println("Repair: ${repair.summary}")
+    }
+    println("Verification exit: ${verification.finalResult.exitCode}")
+    println("Verification status: ${verification.finalResult.status}")
+    if (verification.finalResult.stdout.isNotBlank()) {
+        println(verification.finalResult.stdout)
+    }
+}
+
 internal fun renderHelpText(): String {
     return buildString {
         appendLine("d2t commands:")
@@ -493,11 +532,14 @@ internal fun renderHelpText(): String {
         appendLine("  scan")
         appendLine("  plan [path-to-viewmodel]")
         appendLine("  generate [path-to-viewmodel] [--write] [--output-root path] [--ai|--no-ai] [--strict-ai] [--model model-name]")
-        appendLine("  auto [--ai|--no-ai] [--strict-ai] [--model model-name]")
+        appendLine("  auto [--ai|--no-ai] [--strict-ai] [--model model-name] [--no-verify] [--repair]")
         appendLine("  verify [gradle-task]")
         appendLine("Scope:")
         appendLine("  1.0 target: CLI for diff-driven Android ViewModel local unit test generation and verification")
         appendLine("  MCP app is experimental and currently prints a catalog only")
+        appendLine("Verification:")
+        appendLine("  auto writes generated tests and verifies them by default")
+        appendLine("  --repair enables one bounded repair pass for common import and coroutine test utility failures")
         appendLine("AI:")
         appendLine("  Responses-compatible endpoints only")
         appendLine("Config:")
