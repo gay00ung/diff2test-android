@@ -7,6 +7,8 @@ This fixture contains fake Android-style ViewModels that exist only to test `dif
 - `app/src/main/java/com/example/auth/SignUpViewModel.kt`
 - `app/src/main/java/com/example/auth/LoginViewModel.kt`
 - `app/src/main/java/com/example/profile/EditProfileViewModel.kt`
+- `app/src/main/java/com/example/search/SearchViewModel.kt`
+- `app/src/main/java/com/example/onboarding/OnboardingViewModel.kt`
 
 ## Example Flow
 

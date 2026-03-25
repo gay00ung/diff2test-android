@@ -61,7 +61,7 @@ The 1.0 promise should stay narrow:
 - bring-your-own API key with Responses-compatible AI endpoints
 - release ZIP and Homebrew distribution
 
-The current roadmap for that work lives in [`docs/roadmap-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/roadmap-1.0.md).
+The current roadmap for that work lives in [`docs/roadmap-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/roadmap-1.0.md), and the final release gate is tracked in [`docs/release-gate-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/release-gate-1.0.md).
 
 ## Supported Today
 
@@ -69,6 +69,7 @@ The current roadmap for that work lives in [`docs/roadmap-1.0.md`](/Users/shinga
 - scenario-first planning for changed ViewModels
 - generated local unit test candidates
 - Gradle verification of generated test targets
+- one bounded repair pass for common import and coroutine utility failures when `auto --repair` is enabled
 - user-owned AI configuration via `d2t init` and `d2t doctor`
 - Homebrew and release ZIP distribution
 
@@ -130,7 +131,9 @@ d2t verify
 
 If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`.
 
-Commands that rely on the current analyzer surface explicit analysis warnings when they are using heuristic source inspection instead of PSI or symbol-backed analysis.
+`auto` now writes generated tests and verifies them by default. Add `--repair` if you want one bounded repair pass for common import and coroutine-test utility failures.
+
+Commands that rely on the current analyzer surface explicit analysis warnings when they are using source-backed declaration parsing without PSI or symbol-backed analysis.
 
 ## AI Configuration
 
@@ -198,7 +201,7 @@ d2t doctor
 d2t scan
 d2t plan path/to/SomeViewModel.kt
 d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai] [--strict-ai]
-d2t auto [--ai|--no-ai] [--strict-ai] [--model model-name]
+d2t auto [--ai|--no-ai] [--strict-ai] [--model model-name] [--no-verify] [--repair]
 d2t verify :module:testTask
 ```
 
@@ -228,10 +231,10 @@ apps/cli/build/distributions/d2t.zip
 
 ## Current Limitations
 
-- The Kotlin analyzer is still heuristic and should be replaced with PSI or symbol resolution for 1.0.
+- The Kotlin analyzer is source-backed but still lacks PSI or symbol resolution for 1.0.
 - AI generation currently supports Responses-compatible endpoints only.
 - Native Anthropic `messages` transport is not implemented yet.
-- The repair loop is not implemented end-to-end yet.
+- Repair is still bounded and only covers common generated-test import or coroutine utility failures.
 - The MCP app is experimental and not yet a real transport-bound server.
 
 When `--ai` is explicitly enabled, AI generation now fails closed instead of silently pretending success through heuristic fallback. Use `auto` without `--ai` only if you want fallback behavior.

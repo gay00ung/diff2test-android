@@ -61,7 +61,7 @@
 - 사용자가 직접 관리하는 API 키와 Responses-compatible AI endpoint
 - 릴리스 ZIP과 Homebrew 배포
 
-현재 1.0 준비 항목은 [`docs/roadmap-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/roadmap-1.0.md)에 정리되어 있습니다.
+현재 1.0 준비 항목은 [`docs/roadmap-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/roadmap-1.0.md)에, 최종 릴리스 게이트는 [`docs/release-gate-1.0.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/release-gate-1.0.md)에 정리되어 있습니다.
 
 ## 현재 지원하는 범위
 
@@ -69,6 +69,7 @@
 - 변경된 ViewModel에 대한 시나리오 중심 테스트 계획 생성
 - local unit test 후보 코드 생성
 - 생성된 테스트 대상 Gradle 검증
+- `auto --repair` 사용 시 import 및 coroutine test utility 오류에 대한 bounded repair 1회
 - `d2t init`, `d2t doctor` 기반 사용자 설정
 - Homebrew와 릴리스 ZIP 배포
 
@@ -130,7 +131,9 @@ d2t verify
 
 소스에서 직접 실행하는 경우에는 `d2t` 대신 `./d2t`를 사용해주세요.
 
-현재 analyzer가 PSI나 symbol resolution 대신 heuristic source inspection을 쓰는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
+`auto`는 이제 기본으로 생성 후 검증까지 수행합니다. import나 coroutine test utility 관련 공통 오류에 대해 1회 bounded repair를 시도하려면 `--repair`를 사용해주세요.
+
+현재 analyzer가 PSI나 symbol resolution 대신 source-backed declaration parsing을 쓰는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
 
 ## AI 설정
 
@@ -198,7 +201,7 @@ d2t doctor
 d2t scan
 d2t plan path/to/SomeViewModel.kt
 d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai] [--strict-ai]
-d2t auto [--ai|--no-ai] [--strict-ai] [--model model-name]
+d2t auto [--ai|--no-ai] [--strict-ai] [--model model-name] [--no-verify] [--repair]
 d2t verify :module:testTask
 ```
 
@@ -235,7 +238,7 @@ apps/cli/build/distributions/d2t.zip
 - 1.0 수준의 Kotlin PSI 또는 symbol resolution 기반 정밀 분석
 - Responses-compatible 외의 AI transport
 - native Anthropic `messages` transport
-- repair 루프의 end-to-end 구현
+- repair는 아직 bounded import 및 coroutine utility 보정 수준만 지원
 - transport가 연결된 정식 MCP 서버
 
 또한 `--ai`를 명시적으로 사용한 경우에는 AI 생성 실패를 heuristic fallback으로 숨기지 않고 실패로 처리합니다. fallback 동작이 필요하면 `--ai` 없이 `auto` 경로를 사용해주세요.

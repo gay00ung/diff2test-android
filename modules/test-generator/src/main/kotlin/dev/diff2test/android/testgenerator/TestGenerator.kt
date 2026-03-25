@@ -9,6 +9,7 @@ import dev.diff2test.android.core.ViewModelAnalysis
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
+import kotlin.math.max
 
 interface TestGenerator {
     fun generate(plan: TestPlan, context: TestContext, analysis: ViewModelAnalysis): GeneratedTestBundle
@@ -44,6 +45,9 @@ class KotlinUnitTestGenerator : TestGenerator {
             appendLine("import kotlinx.coroutines.test.StandardTestDispatcher")
             appendLine("import kotlinx.coroutines.test.advanceUntilIdle")
             appendLine("import kotlinx.coroutines.test.runTest")
+            helper.imports.sorted().forEach { importLine ->
+                appendLine(importLine)
+            }
             appendLine()
             appendLine("@OptIn(ExperimentalCoroutinesApi::class)")
             appendLine("class $generatedClassName {")
@@ -324,6 +328,7 @@ private class GeneratedTestHelperBuilder(
 ) {
     val declarations = mutableListOf<String>()
     val constructorArguments = mutableListOf<String>()
+    val imports = mutableSetOf<String>()
     val warnings = mutableListOf<String>()
     private val generatedNames = mutableSetOf<String>()
     private val moduleRoot = inferModuleRootFromTarget(analysis.filePath)
@@ -347,6 +352,14 @@ private class GeneratedTestHelperBuilder(
             return "$preferredName = testDispatcher"
         }
 
+        if (typeName == "SavedStateHandle") {
+            val sourceFile = resolveTypeFile(moduleRoot, typeName)
+            if (sourceFile != null) {
+                registerImport(Files.readString(sourceFile), typeName)
+            }
+            return "$preferredName = SavedStateHandle()"
+        }
+
         if (!visited.add(typeName)) {
             warnings += "Detected recursive dependency while generating test doubles for $typeName."
             return "$preferredName = TODO(${quote("Provide a non-recursive test double for $typeName")})"
@@ -359,6 +372,7 @@ private class GeneratedTestHelperBuilder(
         }
 
         val sourceText = Files.readString(sourceFile)
+        registerImport(sourceText, typeName)
         return if (INTERFACE_PATTERN.containsMatchIn(sourceText)) {
             val variableName = ensureUniqueName(preferredName)
             declarations += buildInterfaceStub(variableName, typeName, sourceText)
@@ -439,8 +453,7 @@ private class GeneratedTestHelperBuilder(
             return emptyList()
         }
 
-        return match.groupValues[2]
-            .split(",")
+        return splitParameters(match.groupValues[2])
             .mapNotNull { parameter ->
                 val normalized = parameter
                     .replace("\n", " ")
@@ -460,6 +473,17 @@ private class GeneratedTestHelperBuilder(
             }
     }
 
+    private fun registerImport(sourceText: String, typeName: String) {
+        val packageName = PACKAGE_PATTERN.find(sourceText)?.groupValues?.get(1).orEmpty()
+        if (packageName.isBlank() || packageName == analysis.packageName) {
+            return
+        }
+        if ('.' in typeName) {
+            return
+        }
+        imports += "import $packageName.$typeName"
+    }
+
     private fun ensureUniqueName(name: String): String {
         var candidate = name.replaceFirstChar { it.lowercase(Locale.ROOT) }
         var index = 1
@@ -469,6 +493,41 @@ private class GeneratedTestHelperBuilder(
         }
         return candidate
     }
+}
+
+private fun splitParameters(parameterBlock: String): List<String> {
+    if (parameterBlock.isBlank()) {
+        return emptyList()
+    }
+
+    val parameters = mutableListOf<String>()
+    val builder = StringBuilder()
+    var angleDepth = 0
+    var parenDepth = 0
+
+    parameterBlock.forEach { char ->
+        when (char) {
+            '<' -> angleDepth += 1
+            '>' -> angleDepth = max(0, angleDepth - 1)
+            '(' -> parenDepth += 1
+            ')' -> parenDepth = max(0, parenDepth - 1)
+            ',' -> {
+                if (angleDepth == 0 && parenDepth == 0) {
+                    parameters += builder.toString()
+                    builder.clear()
+                    return@forEach
+                }
+            }
+        }
+
+        builder.append(char)
+    }
+
+    if (builder.isNotBlank()) {
+        parameters += builder.toString()
+    }
+
+    return parameters.map(String::trim).filter(String::isNotEmpty)
 }
 
 private fun defaultReturnValue(returnType: String): String {
@@ -496,7 +555,12 @@ private fun defaultValueForGeneric(typeName: String): String {
         "Unit" -> "Unit"
         "String" -> quote("generated")
         "Boolean" -> "true"
-        else -> "TODO(${quote("Provide value for $typeName")})"
+        else -> when {
+            typeName.startsWith("List<") -> "emptyList()"
+            typeName.startsWith("Set<") -> "emptySet()"
+            typeName.startsWith("Map<") -> "emptyMap()"
+            else -> "TODO(${quote("Provide value for $typeName")})"
+        }
     }
 }
 
@@ -518,6 +582,7 @@ private fun quote(value: String): String {
 
 private val SETTER_METHOD_PATTERN = Regex("""on([A-Z][A-Za-z0-9_]*)Changed""")
 private val SETTER_SOURCE_PATTERN = Regex("""fun\s+(on([A-Z][A-Za-z0-9_]*)Changed)\s*\(""")
+private val PACKAGE_PATTERN = Regex("""^\s*package\s+([A-Za-z0-9_.]+)""", RegexOption.MULTILINE)
 private val ERROR_MESSAGE_PATTERN = Regex("errorMessage\\s*=\\s*\"([^\"]+)\"")
 private val SUCCESS_PROPERTY_PATTERN = Regex("""(is[A-Z][A-Za-z0-9_]*)\s*=\s*true""")
 private val INTERFACE_PATTERN = Regex("""\binterface\s+[A-Za-z_][A-Za-z0-9_]*""")
