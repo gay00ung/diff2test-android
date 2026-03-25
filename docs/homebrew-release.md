@@ -91,17 +91,20 @@ The token needs write access to:
 
 Without that secret, the workflow still publishes the release asset and prints the formula values you need to update manually.
 
-The tag workflow creates the next version automatically with these rules:
+The tag workflow resolves the next version with this priority:
 
-- `BREAKING CHANGE` or `type!:` commits -> major bump
-- `feat:` commits -> minor bump
-- `fix:`, `refactor:`, `perf:`, `build:`, `ci:` commits -> patch bump
-- `docs:`, `test:`, `chore:` only -> no release tag
-- `[skip release]` or `[no release]` anywhere in commit history since the last tag -> skip tagging
+1. If [`build.gradle.kts`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/build.gradle.kts) contains a semantic version higher than the latest tag, that exact version becomes the next tag.
+2. If commit history contains an explicit release commit like `build: release 0.2.0`, that version becomes the next tag.
+3. Otherwise, conventional commit prefixes decide the bump:
+   - `BREAKING CHANGE` or `type!:` commits -> major bump
+   - `feat:` commits -> minor bump
+   - `fix:`, `refactor:`, `perf:`, `build:`, `ci:` commits -> patch bump
+   - `docs:`, `test:`, `chore:` only -> no release tag
+4. `[skip release]` or `[no release]` still skip tagging when no explicit version source is present.
 
 ## What Is Still Manual
 
-The automation does **not** update [`build.gradle.kts`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/build.gradle.kts) for you. The release tag is the source of truth for the GitHub Release, but if you want the Gradle project version to match the released version, update it in the PR before merge.
+The automation does **not** update [`build.gradle.kts`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/build.gradle.kts) for you. If you want the next release to be `0.2.0`, set `version = "0.2.0"` in the PR before merge.
 
 That means you still choose one of two operational styles:
 
@@ -113,7 +116,7 @@ That means you still choose one of two operational styles:
 For now, the cleanest flow is:
 
 1. Merge the release branch into `main`
-2. Update the project version in the PR if you want Gradle metadata to match the release
+2. Update the project version in the PR to the intended release version
 3. Let `tag-release.yml` create the next tag automatically
 4. Let `release.yml` publish `d2t.zip`
 5. If `HOMEBREW_TAP_TOKEN` is configured, let the workflow update the tap repo automatically

@@ -42,6 +42,7 @@ jobs:
           python3 scripts/next_release_version.py \
             --latest-tag "${LATEST_TAG}" \
             --commits-file /tmp/d2t-release-commits.txt \
+            --version-file build.gradle.kts \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Create and push tag
@@ -62,11 +63,15 @@ jobs:
             echo "## Tag release"
             echo
             echo "- Latest tag: \`${{ steps.version.outputs.latest_tag || 'n/a' }}\`"
+            echo "- Project version: \`${{ steps.version.outputs.project_version || 'n/a' }}\`"
             if [ "${{ steps.version.outputs.skip }}" = "true" ]; then
               echo "- Result: skipped"
               echo "- Reason: ${{ steps.version.outputs.reason }}"
             else
-              echo "- Bump: \`${{ steps.version.outputs.bump }}\`"
+              if [ -n "${{ steps.version.outputs.bump }}" ]; then
+                echo "- Bump: \`${{ steps.version.outputs.bump }}\`"
+              fi
+              echo "- Source: \`${{ steps.version.outputs.source }}\`"
               echo "- Next tag: \`${{ steps.version.outputs.next_tag }}\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
