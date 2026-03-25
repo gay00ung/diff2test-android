@@ -212,7 +212,7 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
         }
         val analyses = SourceBackedViewModelAnalyzer().analyze(explicitTargetChangeSet(target))
         check(analyses.isNotEmpty()) {
-            "The source-backed analyzer expects a path ending with ViewModel.kt."
+            "The PSI-backed analyzer expects a path ending with ViewModel.kt."
         }
         return analyses.first()
     }

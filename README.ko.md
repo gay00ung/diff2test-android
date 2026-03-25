@@ -133,7 +133,7 @@ d2t verify
 
 `auto`는 이제 기본으로 생성 후 검증까지 수행합니다. import나 coroutine test utility 관련 공통 오류에 대해 1회 bounded repair를 시도하려면 `--repair`를 사용해주세요.
 
-현재 analyzer가 PSI나 symbol resolution 대신 source-backed declaration parsing을 쓰는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
+현재 analyzer가 symbol resolution 없이 PSI-backed declaration parsing만 사용하는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
 
 ## AI 설정
 

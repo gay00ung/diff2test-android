@@ -133,7 +133,7 @@ If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`
 
 `auto` now writes generated tests and verifies them by default. Add `--repair` if you want one bounded repair pass for common import and coroutine-test utility failures.
 
-Commands that rely on the current analyzer surface explicit analysis warnings when they are using source-backed declaration parsing without PSI or symbol-backed analysis.
+Commands that rely on the current analyzer surface explicit analysis warnings when they are using PSI-backed declaration parsing without symbol resolution.
 
 ## AI Configuration
 
@@ -231,7 +231,7 @@ apps/cli/build/distributions/d2t.zip
 
 ## Current Limitations
 
-- The Kotlin analyzer is source-backed but still lacks PSI or symbol resolution for 1.0.
+- The Kotlin analyzer is PSI-backed, but still lacks symbol resolution for full production fidelity.
 - AI generation currently supports Responses-compatible endpoints only.
 - Native Anthropic `messages` transport is not implemented yet.
 - Repair is still bounded and only covers common generated-test import or coroutine utility failures.

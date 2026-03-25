@@ -44,7 +44,7 @@ class SourceBackedViewModelAnalyzerTest {
         assertTrue(analysis.publicMethods.all { it.mutatesState })
         assertContains(
             analysis.notes.single(),
-            "Source-backed declaration analysis without PSI or symbol resolution",
+            "PSI-backed declaration analysis without symbol resolution",
         )
     }
 

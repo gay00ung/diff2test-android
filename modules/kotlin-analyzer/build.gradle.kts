@@ -8,10 +8,10 @@ kotlin {
 
 dependencies {
     implementation(projects.modules.coreDomain)
+    implementation(kotlin("compiler-embeddable"))
     testImplementation(kotlin("test"))
 }
 
 tasks.test {
     useJUnitPlatform()
 }
-

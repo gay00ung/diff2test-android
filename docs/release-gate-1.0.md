@@ -10,7 +10,7 @@ Use this checklist before creating the first `1.0.0` release.
 
 ## Analyzer
 
-- [ ] The default analyzer is source-backed and no longer presented as a stub
+- [ ] The default analyzer is PSI-backed and no longer presented as a stub
 - [ ] Public methods, constructor dependencies, and observable holders are covered across the fixture matrix
 - [ ] Remaining analyzer limits are surfaced clearly in CLI output
 

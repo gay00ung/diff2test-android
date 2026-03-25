@@ -25,18 +25,18 @@ class MainOutputTest {
             className = "LoginViewModel",
             filePath = Path.of("/tmp/LoginViewModel.kt"),
             notes = listOf(
-                "Source-backed heuristic analysis.",
-                "Source-backed heuristic analysis.",
-                "Replace with PSI for production fidelity.",
+                "PSI-backed declaration analysis without symbol resolution.",
+                "PSI-backed declaration analysis without symbol resolution.",
+                "Symbol resolution is still pending.",
             ),
         )
 
         val rendered = renderAnalysisWarnings(analysis)
 
         assertContains(rendered.orEmpty(), "Analysis warnings:")
-        assertContains(rendered.orEmpty(), "- Source-backed heuristic analysis.")
-        assertContains(rendered.orEmpty(), "- Replace with PSI for production fidelity.")
-        assertEquals(1, Regex("Source-backed heuristic analysis\\.").findAll(rendered.orEmpty()).count())
+        assertContains(rendered.orEmpty(), "- PSI-backed declaration analysis without symbol resolution.")
+        assertContains(rendered.orEmpty(), "- Symbol resolution is still pending.")
+        assertEquals(1, Regex("PSI-backed declaration analysis without symbol resolution\\.").findAll(rendered.orEmpty()).count())
     }
 
     @Test
