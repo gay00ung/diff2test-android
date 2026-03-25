@@ -97,6 +97,7 @@ cd diff2test-android
 d2t init
 d2t doctor
 d2t auto --ai
+d2t verify
 ```
 
 If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`.
@@ -166,10 +167,12 @@ d2t init [--force]
 d2t doctor
 d2t scan
 d2t plan path/to/SomeViewModel.kt
-d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai]
-d2t auto [--ai|--no-ai] [--model model-name]
+d2t generate path/to/SomeViewModel.kt --write [--ai|--no-ai] [--strict-ai]
+d2t auto [--ai|--no-ai] [--strict-ai] [--model model-name]
 d2t verify :module:testTask
 ```
+
+When you run `verify` without an explicit Gradle task, the CLI now verifies generated test files for the currently changed ViewModels.
 
 ## Homebrew Packaging
 
@@ -178,6 +181,8 @@ This repository already includes:
 - a Gradle distribution task: `./gradlew :apps:cli:distZip`
 - a Homebrew formula template: [`packaging/homebrew/d2t.rb`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/packaging/homebrew/d2t.rb)
 - a release guide: [`docs/homebrew-release.md`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/docs/homebrew-release.md)
+- an automatic tag workflow for `main`: [`.github/workflows/tag-release.yml`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/.github/workflows/tag-release.yml)
+- a release automation workflow for tagged builds: [`.github/workflows/release.yml`](/Users/shingayeong/Desktop/projects/gayoung/diff2test-android/.github/workflows/release.yml)
 
 `distZip` creates a runnable CLI bundle that contains:
 
@@ -198,6 +203,8 @@ apps/cli/build/distributions/d2t.zip
 - Native Anthropic `messages` transport is not implemented yet.
 - The repair loop is not implemented end-to-end yet.
 - The MCP app is not yet a real transport-bound server.
+
+When `--ai` is explicitly enabled, AI generation now fails closed instead of silently pretending success through heuristic fallback. Use `auto` without `--ai` only if you want fallback behavior.
 
 ## Legacy Environment Fallback
 

@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  HOMEBREW_TAP_REPO: gay00ung/homebrew-diff2test-android
+  HOMEBREW_FORMULA_PATH: Formula/d2t.rb
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          VERSION="${TAG#v}"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "asset_path=apps/cli/build/distributions/d2t.zip" >> "$GITHUB_OUTPUT"
+          echo "asset_name=d2t.zip" >> "$GITHUB_OUTPUT"
+          echo "asset_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/d2t.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run release validation
+        shell: bash
+        run: |
+          ./gradlew test
+          ./gradlew -p fixtures/sample-app :app:test
+          ./gradlew :apps:cli:distZip
+
+      - name: Compute artifact checksum
+        id: sha
+        shell: bash
+        run: |
+          SHA256="$(shasum -a 256 "${{ steps.meta.outputs.asset_path }}" | awk '{print $1}')"
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          ASSET_PATH="${{ steps.meta.outputs.asset_path }}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ASSET_PATH}#d2t.zip" --clobber
+          else
+            gh release create "${TAG}" "${ASSET_PATH}#d2t.zip" \
+              --title "d2t ${VERSION}" \
+              --generate-notes
+          fi
+
+      - name: Show release summary
+        shell: bash
+        run: |
+          {
+            echo "## Release artifact"
+            echo
+            echo "- Tag: \`${{ steps.meta.outputs.tag }}\`"
+            echo "- Version: \`${{ steps.meta.outputs.version }}\`"
+            echo "- Asset: \`${{ steps.meta.outputs.asset_name }}\`"
+            echo "- SHA256: \`${{ steps.sha.outputs.sha256 }}\`"
+            echo "- URL: ${{ steps.meta.outputs.asset_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout Homebrew tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap-repo
+
+      - name: Update Homebrew formula
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        shell: bash
+        run: |
+          python3 scripts/update_homebrew_formula.py \
+            --formula "tap-repo/${HOMEBREW_FORMULA_PATH}" \
+            --homepage "https://github.com/${GITHUB_REPOSITORY}" \
+            --url "${{ steps.meta.outputs.asset_url }}" \
+            --sha256 "${{ steps.sha.outputs.sha256 }}" \
+            --version "${{ steps.meta.outputs.version }}"
+
+      - name: Push Homebrew formula update
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        shell: bash
+        run: |
+          cd tap-repo
+          VERSION="${{ steps.meta.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Homebrew formula already matches the new release."
+            exit 0
+          fi
+
+          git add "${HOMEBREW_FORMULA_PATH}"
+          git commit -m "chore: update d2t ${VERSION} formula"
+          git push
+
+      - name: Note manual tap update requirement
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN == '' }}
+        shell: bash
+        run: |
+          {
+            echo
+            echo "## Homebrew tap"
+            echo
+            echo "HOMEBREW_TAP_TOKEN is not configured, so the tap repo was not updated automatically."
+            echo "Update ${HOMEBREW_TAP_REPO}/${HOMEBREW_FORMULA_PATH} manually with:"
+            echo "- version: \`${{ steps.meta.outputs.version }}\`"
+            echo "- url: \`${{ steps.meta.outputs.asset_url }}\`"
+            echo "- sha256: \`${{ steps.sha.outputs.sha256 }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

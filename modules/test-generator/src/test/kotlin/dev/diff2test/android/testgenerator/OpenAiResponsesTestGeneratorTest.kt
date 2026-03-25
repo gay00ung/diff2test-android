@@ -5,13 +5,30 @@ import dev.diff2test.android.core.RiskLevel
 import dev.diff2test.android.core.StyleGuide
 import dev.diff2test.android.core.TestContext
 import dev.diff2test.android.core.TestPlan
+import dev.diff2test.android.core.TestScenario
 import dev.diff2test.android.core.TestType
 import dev.diff2test.android.core.ViewModelAnalysis
+import java.net.Authenticator
+import java.net.CookieHandler
+import java.net.ProxySelector
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpHeaders
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
+import java.util.Optional
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLParameters
+import javax.net.ssl.SSLSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertContains
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class OpenAiResponsesTestGeneratorTest {
@@ -136,6 +153,49 @@ class OpenAiResponsesTestGeneratorTest {
         assertEquals(listOf("generated from ai"), payload.warnings)
     }
 
+    @Test
+    fun `fails closed when ai generation fails in strict mode`() {
+        val generator = ResponsesApiTestGenerator(
+            config = ResponsesApiConfig(
+                apiKey = "sk-local",
+                model = "gpt-5",
+                baseUrl = "http://127.0.0.1:12345",
+            ),
+            failureMode = AiFailureMode.FAIL_CLOSED,
+            httpClient = fakeHttpClient(
+                statusCode = 200,
+                body = "{not-json}",
+            ),
+        )
+
+        val error = assertFailsWith<IllegalStateException> {
+            generator.generate(plan(), context(), analysis())
+        }
+
+        assertContains(error.message.orEmpty(), "AI generation failed")
+    }
+
+    @Test
+    fun `falls back to heuristic generation in fallback mode`() {
+        val generator = ResponsesApiTestGenerator(
+            config = ResponsesApiConfig(
+                apiKey = "sk-local",
+                model = "gpt-5",
+                baseUrl = "http://127.0.0.1:12345",
+            ),
+            failureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
+            httpClient = fakeHttpClient(
+                statusCode = 500,
+                body = "upstream error",
+            ),
+        )
+
+        val bundle = generator.generate(plan(), context(), analysis())
+
+        assertTrue(bundle.files.single().content.contains("class SignUpViewModelGeneratedTest"))
+        assertContains(bundle.warnings.joinToString("\n"), "Falling back to heuristic generation.")
+    }
+
     private fun findRepoRoot(): Path {
         var current: Path? = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
 
@@ -147,5 +207,87 @@ class OpenAiResponsesTestGeneratorTest {
         }
 
         error("Could not locate repository root from ${System.getProperty("user.dir")}")
+    }
+
+    private fun analysis(): ViewModelAnalysis {
+        return ViewModelAnalysis(
+            className = "SignUpViewModel",
+            packageName = "com.example.auth",
+            filePath = findRepoRoot().resolve("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt"),
+        )
+    }
+
+    private fun plan(): TestPlan {
+        return TestPlan(
+            targetClass = "SignUpViewModel",
+            targetMethods = listOf("submitRegistration"),
+            testType = TestType.LOCAL_UNIT,
+            scenarios = listOf(
+                TestScenario(
+                    name = "submitRegistration updates state on success",
+                    goal = "happy path",
+                    expectedOutcome = "observable state reflects success",
+                ),
+            ),
+            requiredFakes = emptyList(),
+            assertions = emptyList(),
+            riskLevel = RiskLevel.LOW,
+        )
+    }
+
+    private fun context(): TestContext {
+        return TestContext(
+            moduleName = "app",
+            styleGuide = StyleGuide(),
+        )
+    }
+
+    private fun fakeHttpClient(statusCode: Int, body: String): HttpClient {
+        return object : HttpClient() {
+            override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
+            override fun connectTimeout(): Optional<Duration> = Optional.empty()
+            override fun followRedirects(): Redirect = Redirect.NEVER
+            override fun proxy(): Optional<ProxySelector> = Optional.empty()
+            override fun sslContext(): SSLContext = SSLContext.getDefault()
+            override fun sslParameters(): SSLParameters = SSLParameters()
+            override fun authenticator(): Optional<Authenticator> = Optional.empty()
+            override fun version(): Version = Version.HTTP_1_1
+            override fun executor(): Optional<Executor> = Optional.empty()
+            override fun <T : Any?> send(
+                request: HttpRequest?,
+                responseBodyHandler: HttpResponse.BodyHandler<T>?,
+            ): HttpResponse<T> {
+                @Suppress("UNCHECKED_CAST")
+                return fakeResponse(statusCode, body) as HttpResponse<T>
+            }
+
+            override fun <T : Any?> sendAsync(
+                request: HttpRequest?,
+                responseBodyHandler: HttpResponse.BodyHandler<T>?,
+            ): CompletableFuture<HttpResponse<T>> {
+                error("Not used in tests")
+            }
+
+            override fun <T : Any?> sendAsync(
+                request: HttpRequest?,
+                responseBodyHandler: HttpResponse.BodyHandler<T>?,
+                pushPromiseHandler: HttpResponse.PushPromiseHandler<T>?,
+            ): CompletableFuture<HttpResponse<T>> {
+                error("Not used in tests")
+            }
+        }
+    }
+
+    private fun fakeResponse(statusCode: Int, body: String): HttpResponse<String> {
+        return object : HttpResponse<String> {
+            override fun statusCode(): Int = statusCode
+            override fun request(): HttpRequest = HttpRequest.newBuilder().uri(URI.create("http://127.0.0.1:12345/responses")).build()
+            override fun previousResponse(): Optional<HttpResponse<String>> = Optional.empty()
+            override fun headers(): HttpHeaders = HttpHeaders.of(emptyMap()) { _, _ -> true }
+            override fun body(): String = body
+            override fun sslSession(): Optional<SSLSession> = Optional.empty()
+            override fun uri(): URI = URI.create("http://127.0.0.1:12345/responses")
+            override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
+        }
     }
 }

@@ -31,6 +31,11 @@ data class ResponsesApiConfig(
     val requestTimeoutSeconds: Long = 180,
 )
 
+enum class AiFailureMode {
+    FALLBACK_TO_HEURISTIC,
+    FAIL_CLOSED,
+}
+
 fun responsesApiConfigFromEnvironment(modelOverride: String? = null): ResponsesApiConfig? {
     return responsesApiConfigFromEnvironment(
         environment = System.getenv(),
@@ -108,6 +113,7 @@ internal fun responsesApiConfigFromEnvironment(
 class ResponsesApiTestGenerator(
     private val config: ResponsesApiConfig,
     private val fallback: TestGenerator = KotlinUnitTestGenerator(),
+    private val failureMode: AiFailureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(config.connectTimeoutSeconds))
         .build(),
@@ -117,11 +123,23 @@ class ResponsesApiTestGenerator(
         context: TestContext,
         analysis: ViewModelAnalysis,
     ): GeneratedTestBundle {
+        val startedAt = System.nanoTime()
         return try {
             val promptSpec = buildPromptSpec(plan, context, analysis)
             val requestBody = buildResponsesRequest(promptSpec.instructions, promptSpec.input)
+            logAiProgress(
+                "request started: model=${config.model}, url=${config.baseUrl}/responses, " +
+                    "instructions=${promptSpec.instructions.length} chars, input=${promptSpec.input.length} chars, " +
+                    "body=${requestBody.length} chars, timeout=${config.requestTimeoutSeconds}s",
+            )
             val responseBody = executeResponsesRequest(requestBody)
+            logAiProgress(
+                "response received: ${responseBody.length} chars in ${elapsedMillis(startedAt)}ms; parsing structured payload",
+            )
             val payload = extractStructuredPayload(responseBody)
+            logAiProgress(
+                "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
+            )
 
             GeneratedTestBundle(
                 plan = plan,
@@ -134,6 +152,15 @@ class ResponsesApiTestGenerator(
                 warnings = payload.warnings,
             )
         } catch (error: Exception) {
+            logAiProgress(
+                "request failed after ${elapsedMillis(startedAt)}ms: ${error.message ?: error::class.simpleName}",
+            )
+            if (failureMode == AiFailureMode.FAIL_CLOSED) {
+                throw IllegalStateException(
+                    "AI generation failed: ${error.message ?: error::class.simpleName}",
+                    error,
+                )
+            }
             val fallbackBundle = fallback.generate(plan, context, analysis)
             fallbackBundle.copy(
                 warnings = listOf(
@@ -148,6 +175,7 @@ class ResponsesApiTestGenerator(
     }
 
     private fun executeResponsesRequest(requestBody: String): String {
+        logAiProgress("waiting for response...")
         val request = HttpRequest.newBuilder()
             .uri(URI.create("${config.baseUrl}/responses"))
             .timeout(Duration.ofSeconds(config.requestTimeoutSeconds))
@@ -162,6 +190,14 @@ class ResponsesApiTestGenerator(
         }
         return response.body()
     }
+}
+
+private fun logAiProgress(message: String) {
+    println("[ai] $message")
+}
+
+private fun elapsedMillis(startedAt: Long): Long {
+    return (System.nanoTime() - startedAt) / 1_000_000
 }
 
 internal fun buildResponsesRequest(

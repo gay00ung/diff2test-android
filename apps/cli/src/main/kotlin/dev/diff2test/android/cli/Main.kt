@@ -9,14 +9,17 @@ import dev.diff2test.android.core.ChangedFile
 import dev.diff2test.android.core.ChangedSymbol
 import dev.diff2test.android.core.GeneratedTestBundle
 import dev.diff2test.android.core.GradleRunRequest
+import dev.diff2test.android.core.RiskLevel
 import dev.diff2test.android.core.SymbolKind
 import dev.diff2test.android.core.TestPlan
+import dev.diff2test.android.core.TestType
 import dev.diff2test.android.core.ViewModelAnalysis
 import dev.diff2test.android.gradlerunner.JvmGradleRunner
 import dev.diff2test.android.kotlinanalyzer.StubViewModelAnalyzer
 import dev.diff2test.android.policy.DefaultPolicyEngine
 import dev.diff2test.android.styleindex.DefaultStyleIndexer
 import dev.diff2test.android.testclassifier.DefaultTestClassifier
+import dev.diff2test.android.testgenerator.AiFailureMode
 import dev.diff2test.android.testgenerator.FileSystemGeneratedTestWriter
 import dev.diff2test.android.testgenerator.KotlinUnitTestGenerator
 import dev.diff2test.android.testgenerator.ResponsesApiTestGenerator
@@ -96,7 +99,7 @@ private fun runPlan(target: String?) {
 
 private fun runGenerate(options: GenerateOptions) {
     val analysis = resolveAnalysis(options.target)
-    val generator = createGenerator(options.aiPreference, options.model)
+    val generator = createGenerator(options.aiPreference, options.model, options.strictAi)
     val bundle = createBundle(analysis, generator)
 
     if (options.write) {
@@ -111,7 +114,7 @@ private fun runAuto(options: AutoOptions) {
     check(analyses.isNotEmpty()) {
         "No changed ViewModel files were detected in the current diff."
     }
-    val generator = createGenerator(options.aiPreference, options.model)
+    val generator = createGenerator(options.aiPreference, options.model, options.strictAi)
 
     analyses.forEach { analysis ->
         val bundle = createBundle(analysis, generator)
@@ -122,21 +125,44 @@ private fun runAuto(options: AutoOptions) {
 }
 
 private fun runVerify(task: String?) {
-    val requestedTask = task ?: ":apps:cli:test"
-    val result = JvmGradleRunner().run(
-        GradleRunRequest(
-            module = ":apps:cli",
-            task = requestedTask,
-            workingDirectory = workspaceRoot,
-        ),
-    )
-    val policy = DefaultPolicyEngine().evaluate(createPlan(resolveAnalysis(null)), result, repairAttempts = 0)
+    if (task != null) {
+        val result = JvmGradleRunner().run(
+            GradleRunRequest(
+                module = ":apps:cli",
+                task = task,
+                workingDirectory = workspaceRoot,
+            ),
+        )
+        val policy = DefaultPolicyEngine().evaluate(defaultPolicyPlan(), result, repairAttempts = 0)
 
-    println("Command: ${result.command.joinToString(" ")}")
-    println("Exit: ${result.exitCode}")
-    println("Status: ${result.status}")
-    println("Policy: ${policy.rationale}")
-    println(result.stdout)
+        println("Command: ${result.command.joinToString(" ")}")
+        println("Exit: ${result.exitCode}")
+        println("Status: ${result.status}")
+        println("Policy: ${policy.rationale}")
+        println(result.stdout)
+        return
+    }
+
+    val analyses = resolveChangedAnalyses()
+    check(analyses.isNotEmpty()) {
+        "No changed ViewModel files were detected in the current diff. Pass an explicit Gradle task or create a diff before running `verify`."
+    }
+
+    analyses.forEach { analysis ->
+        val plan = createPlan(analysis)
+        val target = inferGeneratedTestTarget(analysis, plan)
+        requireGeneratedTestFile(target)
+        val result = JvmGradleRunner().run(createVerifyRequest(target))
+        val policy = DefaultPolicyEngine().evaluate(plan, result, repairAttempts = 0)
+
+        println("Target: ${target.filePath}")
+        println("Command: ${result.command.joinToString(" ")}")
+        println("Exit: ${result.exitCode}")
+        println("Status: ${result.status}")
+        println("Policy: ${policy.rationale}")
+        println(result.stdout)
+        println()
+    }
 }
 
 private fun createPlan(analysis: ViewModelAnalysis): TestPlan {
@@ -158,6 +184,10 @@ private fun createBundle(
 
 private fun resolveAnalysis(target: String?): ViewModelAnalysis {
     if (target != null) {
+        val requestedPath = resolveTargetPath(target)
+        check(Files.exists(requestedPath)) {
+            "Target file does not exist: $requestedPath"
+        }
         val analyses = StubViewModelAnalyzer().analyze(explicitTargetChangeSet(target))
         check(analyses.isNotEmpty()) {
             "The current stub analyzer expects a path ending with ViewModel.kt."
@@ -170,7 +200,7 @@ private fun resolveAnalysis(target: String?): ViewModelAnalysis {
         return detectedAnalyses.first()
     }
 
-    return StubViewModelAnalyzer().analyze(explicitTargetChangeSet("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt")).first()
+    error("No changed ViewModel files were detected in the current diff. Pass an explicit ViewModel path.")
 }
 
 private fun resolveChangedAnalyses(): List<ViewModelAnalysis> {
@@ -184,19 +214,11 @@ private fun resolveChangedAnalyses(): List<ViewModelAnalysis> {
 }
 
 private fun explicitTargetChangeSet(target: String): ChangeSet {
-    val rawPath = Path.of(target)
-    val path = if (rawPath.isAbsolute) rawPath.normalize() else workspaceRoot.resolve(target).normalize()
-    val symbols = if (Files.exists(path)) {
-        extractKotlinSymbols(path)
-    } else {
-        listOf(
-            ChangedSymbol(
-                name = "loadData",
-                kind = SymbolKind.METHOD,
-                signature = "suspend fun loadData()",
-            ),
-        )
+    val path = resolveTargetPath(target)
+    check(Files.exists(path)) {
+        "Target file does not exist: $path"
     }
+    val symbols = extractKotlinSymbols(path)
 
     return ChangeSet(
         source = ChangeSource.GIT_DIFF,
@@ -208,6 +230,11 @@ private fun explicitTargetChangeSet(target: String): ChangeSet {
         ),
         summary = "Explicit target change set.",
     )
+}
+
+private fun resolveTargetPath(target: String): Path {
+    val rawPath = Path.of(target)
+    return if (rawPath.isAbsolute) rawPath.normalize() else workspaceRoot.resolve(target).normalize()
 }
 
 private fun findWorkspaceRoot(start: Path): Path {
@@ -263,12 +290,25 @@ private fun renderPlan(plan: TestPlan): String {
     }
 }
 
+private fun defaultPolicyPlan(): TestPlan {
+    return TestPlan(
+        targetClass = "ManualVerifyTarget",
+        targetMethods = emptyList(),
+        testType = TestType.LOCAL_UNIT,
+        scenarios = emptyList(),
+        requiredFakes = emptyList(),
+        assertions = emptyList(),
+        riskLevel = RiskLevel.LOW,
+    )
+}
+
 private data class GenerateOptions(
     val target: String?,
     val write: Boolean,
     val outputRoot: String?,
     val aiPreference: AiPreference,
     val model: String?,
+    val strictAi: Boolean,
 )
 
 private data class InitOptions(
@@ -278,6 +318,7 @@ private data class InitOptions(
 private data class AutoOptions(
     val aiPreference: AiPreference,
     val model: String?,
+    val strictAi: Boolean,
 )
 
 private enum class AiPreference {
@@ -292,12 +333,14 @@ private fun parseGenerateArguments(arguments: List<String>): GenerateOptions {
     var outputRoot: String? = null
     var aiPreference = AiPreference.AUTO
     var model: String? = null
+    var strictAi = false
     var index = 0
 
     while (index < arguments.size) {
         when (val argument = arguments[index]) {
             "--write" -> write = true
             "--ai" -> aiPreference = AiPreference.ENABLED
+            "--strict-ai" -> strictAi = true
             "--no-ai" -> aiPreference = AiPreference.DISABLED
             "--model" -> {
                 model = arguments.getOrNull(index + 1)
@@ -324,6 +367,7 @@ private fun parseGenerateArguments(arguments: List<String>): GenerateOptions {
         outputRoot = outputRoot,
         aiPreference = aiPreference,
         model = model,
+        strictAi = strictAi,
     )
 }
 
@@ -341,11 +385,13 @@ private fun parseInitArguments(arguments: List<String>): InitOptions {
 private fun parseAutoArguments(arguments: List<String>): AutoOptions {
     var aiPreference = AiPreference.AUTO
     var model: String? = null
+    var strictAi = false
     var index = 0
 
     while (index < arguments.size) {
         when (arguments[index]) {
             "--ai" -> aiPreference = AiPreference.ENABLED
+            "--strict-ai" -> strictAi = true
             "--no-ai" -> aiPreference = AiPreference.DISABLED
             "--model" -> {
                 model = arguments.getOrNull(index + 1)
@@ -361,12 +407,14 @@ private fun parseAutoArguments(arguments: List<String>): AutoOptions {
     return AutoOptions(
         aiPreference = aiPreference,
         model = model,
+        strictAi = strictAi,
     )
 }
 
 private fun createGenerator(
     aiPreference: AiPreference,
     modelOverride: String?,
+    strictAi: Boolean,
 ): dev.diff2test.android.testgenerator.TestGenerator {
     val loadResult = loadConfig()
     val resolvedFromConfig = resolveAiConfiguration(loadResult, System.getenv(), modelOverride)
@@ -387,14 +435,24 @@ private fun createGenerator(
                     ?: "--ai requires a valid config file or one of D2T_AI_AUTH_TOKEN, LLM_API_KEY, ANTHROPIC_AUTH_TOKEN, D2T_OPENAI_API_KEY, or OPENAI_API_KEY."
             }
             println("Using Responses API-compatible test generator (${config.model})")
-            ResponsesApiTestGenerator(config)
+            ResponsesApiTestGenerator(
+                config = config,
+                failureMode = AiFailureMode.FAIL_CLOSED,
+            )
         }
 
         AiPreference.DISABLED -> KotlinUnitTestGenerator()
         AiPreference.AUTO -> {
             if (config != null && configIssue == null) {
                 println("Using Responses API-compatible test generator (${config.model})")
-                ResponsesApiTestGenerator(config)
+                ResponsesApiTestGenerator(
+                    config = config,
+                    failureMode = if (strictAi) {
+                        AiFailureMode.FAIL_CLOSED
+                    } else {
+                        AiFailureMode.FALLBACK_TO_HEURISTIC
+                    },
+                )
             } else {
                 KotlinUnitTestGenerator()
             }
@@ -408,8 +466,8 @@ private fun printHelp() {
     println("  doctor")
     println("  scan")
     println("  plan [path-to-viewmodel]")
-    println("  generate [path-to-viewmodel] [--write] [--output-root path] [--ai|--no-ai] [--model model-name]")
-    println("  auto [--ai|--no-ai] [--model model-name]")
+    println("  generate [path-to-viewmodel] [--write] [--output-root path] [--ai|--no-ai] [--strict-ai] [--model model-name]")
+    println("  auto [--ai|--no-ai] [--strict-ai] [--model model-name]")
     println("  verify [gradle-task]")
     println("Config:")
     println("  ~/.config/d2t/config.toml")
