@@ -27,18 +27,32 @@ class SignUpViewModel(
     }
 
     fun onEmailChanged(value: String) {
-        _uiState.update { current -> current.copy(email = value.trim(), errorMessage = null) }
+        _uiState.update { current ->
+            current.copy(
+                email = value.trim().lowercase(),
+                errorMessage = null,
+            )
+        }
     }
 
     fun onPasswordChanged(value: String) {
         _uiState.update { current -> current.copy(password = value, errorMessage = null) }
     }
 
+    fun clearError() {
+        _uiState.update { current -> current.copy(errorMessage = null) }
+    }
+
     fun submitRegistration() {
         val snapshot = _uiState.value
-        if (snapshot.fullName.isBlank() || snapshot.email.isBlank() || snapshot.password.length < 8) {
+        if (
+            snapshot.fullName.isBlank() ||
+            snapshot.email.isBlank() ||
+            !snapshot.email.contains("@") ||
+            snapshot.password.length < 8
+        ) {
             _uiState.update { current ->
-                current.copy(errorMessage = "Please complete all fields with a valid password")
+                current.copy(errorMessage = "Please enter a valid email and a password with at least 8 characters")
             }
             return
         }
@@ -69,4 +83,3 @@ class SignUpViewModel(
         }
     }
 }
-
