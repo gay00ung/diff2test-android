@@ -41,7 +41,15 @@ private fun analyzeViewModelFile(file: ChangedFile): ViewModelAnalysis {
         fallbackAnalysis(file).copy(
             filePath = resolvedPath,
             notes = listOf(
-                "Fallback analysis used because PSI-backed declaration parsing failed: ${failure::class.simpleName ?: "UnknownError"}",
+                buildString {
+                    append("Fallback analysis used because PSI-backed declaration parsing failed: ")
+                    append(failure::class.simpleName ?: "UnknownError")
+                    failure.message?.takeIf(String::isNotBlank)?.let {
+                        append(" (")
+                        append(it)
+                        append(")")
+                    }
+                },
             ),
         )
     }
@@ -58,6 +66,7 @@ internal data class ObservableHolder(
 
 internal fun normalizeTypeName(typeName: String): String {
     return typeName
+        .replace(Regex("""\s*/\*\s*=\s*.*?\*/"""), "")
         .replace("\n", " ")
         .replace(Regex("""\s+"""), " ")
         .trim()

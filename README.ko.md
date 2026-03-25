@@ -134,7 +134,7 @@ d2t verify
 `auto`는 이제 기본으로 생성 후 검증까지 수행합니다. import나 coroutine test utility 관련 공통 오류에 대해 1회 bounded repair를 시도하려면 `--repair`를 사용해주세요.
 생성된 결과물은 기본 내장 quality gate도 통과해야 하며, placeholder assertion이나 남아 있는 `TODO()`가 있으면 실패로 처리합니다.
 
-현재 analyzer가 symbol resolution 없이 PSI-backed declaration parsing만 사용하는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
+현재 analyzer는 same-module Kotlin source에 대해 compiler-backed symbol resolution을 사용하며, 외부 classpath symbol을 끝까지 해석하지 못한 경우에는 관련 경고를 CLI에 그대로 출력합니다.
 
 ## AI 설정
 
@@ -236,8 +236,8 @@ apps/cli/build/distributions/d2t.zip
 
 현재는 아래 항목이 아직 제한되거나 미구현 상태입니다.
 
-- 1.0 수준의 Kotlin PSI 또는 symbol resolution 기반 정밀 분석
-- symbol resolution까지 포함한 Kotlin 정밀 분석
+- same-module Kotlin source 기준 compiler-backed symbol resolution 안정화
+- 외부 dependency/classpath symbol 해석 정확도 추가 개선
 - repair는 아직 bounded import 및 coroutine utility 보정 수준만 지원
 - transport가 연결된 정식 MCP 서버
 

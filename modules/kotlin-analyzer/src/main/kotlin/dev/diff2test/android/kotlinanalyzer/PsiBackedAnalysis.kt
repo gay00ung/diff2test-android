@@ -5,15 +5,25 @@ import dev.diff2test.android.core.CollaboratorDependency
 import dev.diff2test.android.core.SymbolKind
 import dev.diff2test.android.core.TargetMethod
 import dev.diff2test.android.core.ViewModelAnalysis
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import org.jetbrains.kotlin.analyzer.AnalysisResult
+import org.jetbrains.kotlin.cli.common.config.addKotlinSourceRoot
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.cli.jvm.compiler.CliBindingTrace
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
+import org.jetbrains.kotlin.cli.jvm.compiler.TopDownAnalyzerFacadeForJVM
+import org.jetbrains.kotlin.cli.jvm.config.addJavaSourceRoots
+import org.jetbrains.kotlin.cli.jvm.config.addJvmClasspathRoots
+import org.jetbrains.kotlin.cli.jvm.config.configureJdkClasspathRoots
 import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.JVMConfigurationKeys
+import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtCallExpression
 import org.jetbrains.kotlin.psi.KtClass
@@ -25,13 +35,24 @@ import org.jetbrains.kotlin.psi.KtNamedFunction
 import org.jetbrains.kotlin.psi.KtProperty
 import org.jetbrains.kotlin.psi.KtPsiFactory
 import org.jetbrains.kotlin.psi.KtStringTemplateExpression
+import org.jetbrains.kotlin.psi.KtTypeReference
+import org.jetbrains.kotlin.renderer.DescriptorRenderer
+import org.jetbrains.kotlin.resolve.BindingContext
+import org.jetbrains.kotlin.resolve.BindingContext.EXPRESSION_TYPE_INFO
+import org.jetbrains.kotlin.types.KotlinType
+import org.jetbrains.kotlin.types.isError
+import org.jetbrains.kotlin.utils.PathUtil
 
 internal fun analyzeViewModelWithPsi(file: ChangedFile, resolvedPath: Path, sourceText: String): ViewModelAnalysis {
-    val ktFile = KotlinPsiSupport.parse(resolvedPath, sourceText)
+    val moduleRoot = inferModuleRoot(resolvedPath)
+    val compilerResolution = CompilerResolutionCache.forModule(moduleRoot)
+    val ktFile = compilerResolution?.findFile(resolvedPath)
+        ?: KotlinPsiSupport.parse(resolvedPath, sourceText)
     val ktClass = findTargetClass(ktFile, resolvedPath)
     val resolutionContext = ResolutionContext(
         index = LocalSourceIndexCache.forModule(inferModuleRoot(resolvedPath)),
         imports = parseImports(ktFile),
+        compiler = compilerResolution,
     )
     val allObservableHolders = parseObservableHolders(ktClass, resolutionContext)
     val observableHolders = allObservableHolders.filterNot { it.name.startsWith("_") }.ifEmpty { allObservableHolders }
@@ -59,7 +80,7 @@ internal fun analyzeViewModelWithPsi(file: ChangedFile, resolvedPath: Path, sour
         primaryStateType = primaryStateHolder?.typeName,
         androidFrameworkTouchpoints = detectAndroidFrameworkTouchpoints(ktClass, sourceText, resolutionContext),
         notes = listOf(
-            "PSI-backed declaration analysis with local import and typealias resolution. Full compiler symbol resolution is still pending.",
+            resolutionContext.analysisNote(),
         ),
     )
 }
@@ -67,12 +88,33 @@ internal fun analyzeViewModelWithPsi(file: ChangedFile, resolvedPath: Path, sour
 internal data class ResolutionContext(
     val index: LocalSourceIndex,
     val imports: Map<String, String>,
+    val compiler: CompilerResolutionSession? = null,
 )
 
 internal data class LocalSourceIndex(
-    val aliasesBySimpleName: Map<String, String>,
-    val aliasesByQualifiedName: Map<String, String>,
+    val aliasesBySimpleName: Map<String, TypeAliasDefinition>,
+    val aliasesByQualifiedName: Map<String, TypeAliasDefinition>,
 )
+
+internal data class TypeAliasDefinition(
+    val parameters: List<String>,
+    val expandedType: String,
+) {
+    fun instantiate(arguments: List<String>): String? {
+        if (parameters.isEmpty()) {
+            return expandedType
+        }
+        if (arguments.size != parameters.size) {
+            return null
+        }
+
+        var rendered = expandedType
+        parameters.zip(arguments).forEach { (parameter, argument) ->
+            rendered = rendered.replace(Regex("""\b${Regex.escape(parameter)}\b"""), argument)
+        }
+        return rendered
+    }
+}
 
 private object LocalSourceIndexCache {
     private val cache = mutableMapOf<Path, LocalSourceIndex>()
@@ -104,6 +146,36 @@ private object KotlinPsiSupport {
     }
 }
 
+internal data class CompilerResolutionSession(
+    val bindingContext: BindingContext,
+    val filesByPath: Map<Path, KtFile>,
+    val hadErrors: Boolean,
+) {
+    fun findFile(path: Path): KtFile? = filesByPath[path.toAbsolutePath().normalize()]
+
+    fun renderType(typeReference: KtTypeReference?): String? {
+        val reference = typeReference ?: return null
+        val resolved = bindingContext[BindingContext.TYPE, reference] ?: return null
+        return resolved.renderCompilerType()
+    }
+
+    fun renderExpressionType(expression: KtExpression?): String? {
+        val target = expression ?: return null
+        val resolved = bindingContext.getType(target)
+            ?: bindingContext[EXPRESSION_TYPE_INFO, target]?.type
+        return resolved?.renderCompilerType()
+    }
+}
+
+private object CompilerResolutionCache {
+    private val cache = mutableMapOf<Path, CompilerResolutionSession?>()
+
+    fun forModule(moduleRoot: Path): CompilerResolutionSession? {
+        val normalized = moduleRoot.toAbsolutePath().normalize()
+        return cache.getOrPut(normalized) { buildCompilerResolutionSession(normalized) }
+    }
+}
+
 private fun findTargetClass(ktFile: KtFile, resolvedPath: Path): KtClass {
     val expectedName = resolvedPath.fileName.toString().removeSuffix(".kt")
     return ktFile.declarations
@@ -121,7 +193,10 @@ private fun parseConstructorDependencies(
 ): List<CollaboratorDependency> {
     return ktClass.primaryConstructorParameters.mapNotNull { parameter ->
         val name = parameter.name ?: return@mapNotNull null
-        val typeText = parameter.typeReference?.text?.trim()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val renderedType = resolutionContext.compiler?.renderType(parameter.typeReference)
+        val typeText = renderedType
+            ?: parameter.typeReference?.text?.trim()?.takeIf(String::isNotBlank)
+            ?: return@mapNotNull null
         val type = resolveTypeText(typeText, resolutionContext)
         CollaboratorDependency(
             name = name,
@@ -139,10 +214,13 @@ private fun parseObservableHolders(
         .filterIsInstance<KtProperty>()
         .mapNotNull { property ->
             val name = property.name ?: return@mapNotNull null
-            val explicitType = property.typeReference?.text?.let { typeText ->
+            val explicitType = resolutionContext.compiler?.renderType(property.typeReference)?.let { typeText ->
+                parseObservableTypeText(resolveTypeText(typeText, resolutionContext))
+            } ?: property.typeReference?.text?.let { typeText ->
                 parseObservableTypeText(resolveTypeText(typeText, resolutionContext))
             }
-            val inferredType = explicitType ?: parseObservableInitializer(property.initializer)
+            val inferredType = explicitType
+                ?: parseObservableInitializer(property.initializer, resolutionContext)
             inferredType?.let { (kind, typeName) ->
                 ObservableHolder(
                     name = name,
@@ -160,7 +238,7 @@ private fun parseObservableTypeText(typeText: String): Pair<String, String?>? {
     return rawKind to rawType
 }
 
-private fun parseObservableInitializer(initializer: KtExpression?): Pair<String, String?>? {
+private fun parseObservableInitializer(initializer: KtExpression?, resolutionContext: ResolutionContext): Pair<String, String?>? {
     val callExpression = when (initializer) {
         is KtCallExpression -> initializer
         is KtDotQualifiedExpression -> initializer.selectorExpression as? KtCallExpression
@@ -184,10 +262,11 @@ private fun parseObservableInitializer(initializer: KtExpression?): Pair<String,
     }
 
     val firstArgument = callExpression.valueArguments.firstOrNull()?.getArgumentExpression()
-    return kind to inferTypeFromExpression(firstArgument)
+    return kind to inferTypeFromExpression(firstArgument, resolutionContext)
 }
 
-private fun inferTypeFromExpression(expression: KtExpression?): String? {
+private fun inferTypeFromExpression(expression: KtExpression?, resolutionContext: ResolutionContext): String? {
+    resolutionContext.compiler?.renderExpressionType(expression)?.let(::normalizeTypeName)?.let { return it }
     return when (expression) {
         null -> null
         is KtCallExpression -> {
@@ -196,8 +275,8 @@ private fun inferTypeFromExpression(expression: KtExpression?): String? {
         }
 
         is KtNameReferenceExpression -> expression.getReferencedName().takeIf(::looksLikeTypeName)
-        is KtDotQualifiedExpression -> inferTypeFromExpression(expression.selectorExpression)
-            ?: inferTypeFromExpression(expression.receiverExpression)
+        is KtDotQualifiedExpression -> inferTypeFromExpression(expression.selectorExpression, resolutionContext)
+            ?: inferTypeFromExpression(expression.receiverExpression, resolutionContext)
 
         is KtStringTemplateExpression -> "String"
         else -> inferTypeFromText(expression.text)
@@ -283,13 +362,19 @@ private fun detectAndroidFrameworkTouchpoints(
 ): List<String> {
     val referencedTypes = buildSet {
         ktClass.superTypeListEntries.mapNotNullTo(this) { entry ->
-            entry.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }?.substringBefore('<')?.trim()
+            val resolved = resolutionContext.compiler?.renderType(entry.typeReference)
+                ?: entry.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }
+            resolved?.substringBefore('<')?.trim()
         }
         ktClass.primaryConstructorParameters.mapNotNullTo(this) { parameter ->
-            parameter.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }?.substringBefore('<')?.trim()
+            val resolved = resolutionContext.compiler?.renderType(parameter.typeReference)
+                ?: parameter.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }
+            resolved?.substringBefore('<')?.trim()
         }
         ktClass.declarations.filterIsInstance<KtProperty>().mapNotNullTo(this) { property ->
-            property.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }?.substringBefore('<')?.trim()
+            val resolved = resolutionContext.compiler?.renderType(property.typeReference)
+                ?: property.typeReference?.text?.let { resolveTypeText(it, resolutionContext) }
+            resolved?.substringBefore('<')?.trim()
         }
     }
 
@@ -334,15 +419,19 @@ private fun resolveAliasRecursively(typeText: String, resolutionContext: Resolut
 private fun resolveAliasedWholeType(typeText: String, resolutionContext: ResolutionContext): String? {
     val nullableSuffix = if (typeText.endsWith("?")) "?" else ""
     val core = typeText.removeSuffix("?").trim()
+    val invocation = parseTypeAliasInvocation(core)
     val direct = resolutionContext.index.aliasesByQualifiedName[core]
         ?: resolutionContext.index.aliasesBySimpleName[core]
-        ?: resolutionContext.imports[core]?.let { imported ->
+        ?: resolutionContext.index.aliasesByQualifiedName[invocation.name]
+        ?: resolutionContext.index.aliasesBySimpleName[invocation.name]
+        ?: resolutionContext.imports[invocation.name]?.let { imported ->
             resolutionContext.index.aliasesByQualifiedName[imported]
                 ?: resolutionContext.index.aliasesBySimpleName[imported.substringAfterLast('.')]
         }
         ?: return null
 
-    return direct.trim() + nullableSuffix
+    val expanded = direct.instantiate(invocation.arguments) ?: return null
+    return expanded.trim() + nullableSuffix
 }
 
 private fun resolveSingleTypeReference(candidate: String, resolutionContext: ResolutionContext): String {
@@ -372,8 +461,8 @@ private fun inferModuleRoot(path: Path): Path {
 }
 
 private fun buildLocalSourceIndex(moduleRoot: Path): LocalSourceIndex {
-    val aliasesBySimpleName = mutableMapOf<String, String>()
-    val aliasesByQualifiedName = mutableMapOf<String, String>()
+    val aliasesBySimpleName = mutableMapOf<String, TypeAliasDefinition>()
+    val aliasesByQualifiedName = mutableMapOf<String, TypeAliasDefinition>()
     val sourceRoots = listOf(
         moduleRoot.resolve("src/main/kotlin"),
         moduleRoot.resolve("src/main/java"),
@@ -388,10 +477,18 @@ private fun buildLocalSourceIndex(moduleRoot: Path): LocalSourceIndex {
                     val packageName = PACKAGE_PATTERN.find(source)?.groupValues?.getOrNull(1).orEmpty()
                     TYPE_ALIAS_PATTERN.findAll(source).forEach { match ->
                         val aliasName = match.groupValues[1]
-                        val expanded = match.groupValues[2].trim()
-                        aliasesBySimpleName[aliasName] = expanded
+                        val parameters = match.groupValues[2]
+                            .split(',')
+                            .map(String::trim)
+                            .filter(String::isNotBlank)
+                        val expanded = match.groupValues[3].trim()
+                        val definition = TypeAliasDefinition(
+                            parameters = parameters,
+                            expandedType = expanded,
+                        )
+                        aliasesBySimpleName[aliasName] = definition
                         if (packageName.isNotBlank()) {
-                            aliasesByQualifiedName["$packageName.$aliasName"] = expanded
+                            aliasesByQualifiedName["$packageName.$aliasName"] = definition
                         }
                     }
                 }
@@ -404,7 +501,145 @@ private fun buildLocalSourceIndex(moduleRoot: Path): LocalSourceIndex {
     )
 }
 
+private fun parseTypeAliasInvocation(typeText: String): TypeAliasInvocation {
+    val trimmed = typeText.trim()
+    val genericStart = trimmed.indexOf('<')
+    if (genericStart < 0 || !trimmed.endsWith(">")) {
+        return TypeAliasInvocation(trimmed, emptyList())
+    }
+
+    val name = trimmed.substring(0, genericStart).trim()
+    val argumentBlock = trimmed.substring(genericStart + 1, trimmed.length - 1)
+    return TypeAliasInvocation(name, splitTopLevelTypeArguments(argumentBlock))
+}
+
+private fun splitTopLevelTypeArguments(argumentBlock: String): List<String> {
+    if (argumentBlock.isBlank()) {
+        return emptyList()
+    }
+
+    val arguments = mutableListOf<String>()
+    val current = StringBuilder()
+    var depth = 0
+
+    argumentBlock.forEach { character ->
+        when (character) {
+            '<' -> {
+                depth += 1
+                current.append(character)
+            }
+            '>' -> {
+                depth = (depth - 1).coerceAtLeast(0)
+                current.append(character)
+            }
+            ',' -> {
+                if (depth == 0) {
+                    arguments += current.toString().trim()
+                    current.clear()
+                } else {
+                    current.append(character)
+                }
+            }
+            else -> current.append(character)
+        }
+    }
+
+    current.toString().trim().takeIf(String::isNotBlank)?.let(arguments::add)
+    return arguments
+}
+
+private data class TypeAliasInvocation(
+    val name: String,
+    val arguments: List<String>,
+)
+
+private fun buildCompilerResolutionSession(moduleRoot: Path): CompilerResolutionSession? {
+    val sourceRoots = listOf(
+        moduleRoot.resolve("src/main/kotlin"),
+        moduleRoot.resolve("src/main/java"),
+    ).filter(Files::exists)
+    if (sourceRoots.isEmpty()) {
+        return null
+    }
+
+    val configuration = CompilerConfiguration()
+    configuration.put(CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY, MessageCollector.NONE)
+    configuration.put(CommonConfigurationKeys.MODULE_NAME, "diff2test-android-kotlin-analyzer")
+    configuration.put(JVMConfigurationKeys.JVM_TARGET, JvmTarget.JVM_17)
+    sourceRoots.forEach { configuration.addKotlinSourceRoot(it.toString()) }
+    configuration.addJavaSourceRoots(sourceRoots.map(Path::toFile))
+    configuration.configureJdkClasspathRoots()
+    configuration.addJvmClasspathRoots(PathUtil.getJdkClassesRootsFromCurrentJre())
+    currentJvmClasspathFiles().takeIf { it.isNotEmpty() }?.let { configuration.addJvmClasspathRoots(it) }
+
+    val disposable = Disposer.newDisposable("diff2test-android-kotlin-analyzer-symbols")
+    val environment = KotlinCoreEnvironment.createForProduction(
+        disposable,
+        configuration,
+        EnvironmentConfigFiles.JVM_CONFIG_FILES,
+    )
+    val sourceFiles = environment.getSourceFiles()
+    if (sourceFiles.isEmpty()) {
+        return null
+    }
+
+    val analysisResult = TopDownAnalyzerFacadeForJVM.analyzeFilesWithJavaIntegration(
+        environment.project,
+        sourceFiles,
+        CliBindingTrace(),
+        configuration,
+        environment::createPackagePartProvider,
+    )
+
+    return CompilerResolutionSession(
+        bindingContext = analysisResult.bindingContext,
+        filesByPath = sourceFiles.associateBy(::normalizeKtFilePath),
+        hadErrors = runCatching {
+            analysisResult.throwIfError()
+            false
+        }.getOrElse { true },
+    )
+}
+
+private fun currentJvmClasspathFiles(): List<File> {
+    return System.getProperty("java.class.path")
+        .orEmpty()
+        .split(File.pathSeparator)
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .map(::File)
+        .filter(File::exists)
+}
+
+private fun normalizeKtFilePath(ktFile: KtFile): Path {
+    val path = ktFile.virtualFilePath.takeIf(String::isNotBlank)
+        ?: ktFile.name
+    return Path.of(path).toAbsolutePath().normalize()
+}
+
+private fun KotlinType.renderCompilerType(): String? {
+    if (this.isError) {
+        return null
+    }
+    val rendered = DescriptorRenderer.SHORT_NAMES_IN_TYPES.renderType(this)
+    val expanded = TYPE_ALIAS_EXPANSION_COMMENT.find(rendered)?.groupValues?.get(1) ?: rendered
+    return normalizeTypeName(expanded)
+}
+
+private fun ResolutionContext.analysisNote(): String {
+    val compilerSession = compiler
+    if (compilerSession == null) {
+        return "PSI-backed declaration analysis with local import and typealias resolution. Compiler-backed symbol resolution was unavailable for this module."
+    }
+    return if (compilerSession.hadErrors) {
+        "Compiler-backed symbol resolution is enabled, with PSI fallback where module classpath symbols could not be fully resolved."
+    } else {
+        "Compiler-backed symbol resolution is enabled for same-module Kotlin sources."
+    }
+}
+
 private val OBSERVABLE_TYPE_PATTERN = Regex("""^(Mutable)?(StateFlow|SharedFlow|LiveData|Flow|Channel)<(.+)>$""")
 private val PACKAGE_PATTERN = Regex("""^\s*package\s+([A-Za-z0-9_.]+)""", RegexOption.MULTILINE)
-private val TYPE_ALIAS_PATTERN = Regex("""^\s*typealias\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$""", RegexOption.MULTILINE)
+private val TYPE_ALIAS_PATTERN = Regex("""^\s*typealias\s+([A-Za-z_][A-Za-z0-9_]*)(?:<([^>]+)>)?\s*=\s*(.+)$""", RegexOption.MULTILINE)
 private val TYPE_REFERENCE_PATTERN = Regex("""\b[A-Z][A-Za-z0-9_.]*\b""")
+private val TYPE_ALIAS_EXPANSION_COMMENT = Regex("""/\*\s*=\s*(.*?)\s*\*/""")

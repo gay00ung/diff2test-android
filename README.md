@@ -133,7 +133,7 @@ If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`
 `auto` now writes generated tests and verifies them by default. Add `--repair` if you want one bounded repair pass for common import and coroutine-test utility failures.
 Generated output must also pass the built-in quality gate, which rejects placeholder assertions and unresolved `TODO()` scaffolding.
 
-Commands that rely on the current analyzer surface explicit analysis warnings when they are using PSI-backed declaration parsing with local import and typealias resolution, but without full compiler symbol resolution.
+Commands that rely on the current analyzer surface explicit analysis warnings when compiler-backed symbol resolution is active, and when the analyzer had to fall back for unresolved external classpath symbols.
 
 ## AI Configuration
 
@@ -231,7 +231,7 @@ apps/cli/build/distributions/d2t.zip
 
 ## Current Limitations
 
-- The Kotlin analyzer is PSI-backed, but still lacks symbol resolution for full production fidelity.
+- The Kotlin analyzer now uses compiler-backed symbol resolution for same-module Kotlin sources, but external dependency resolution can still fall back when module classpaths are incomplete.
 - AI generation supports the OpenAI Responses API, the Anthropic Messages API, the Gemini GenerateContent API, and Responses-compatible gateways.
 - Repair is still bounded and only covers common generated-test import or coroutine utility failures.
 - The MCP app is experimental and not yet a real transport-bound server.

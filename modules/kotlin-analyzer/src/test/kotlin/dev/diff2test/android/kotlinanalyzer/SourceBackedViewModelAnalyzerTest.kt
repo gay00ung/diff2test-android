@@ -44,7 +44,7 @@ class SourceBackedViewModelAnalyzerTest {
         assertTrue(analysis.publicMethods.all { it.mutatesState })
         assertContains(
             analysis.notes.single(),
-            "PSI-backed declaration analysis with local import and typealias resolution",
+            "Compiler-backed symbol resolution is enabled",
         )
     }
 
@@ -138,6 +138,67 @@ class SourceBackedViewModelAnalyzerTest {
         assertEquals(listOf("RegisterUserUseCase"), analysis.constructorDependencies.map { it.type })
         assertEquals(listOf("uiState: StateFlow<SignUpUiState>"), analysis.stateHolders)
         assertEquals("SignUpUiState", analysis.primaryStateType)
+    }
+
+    @Test
+    fun `resolves generic typealiases with compiler-backed analysis`() {
+        val moduleRoot = Files.createTempDirectory("d2t-analyzer-generic-alias")
+        val sourceRoot = moduleRoot.resolve("src/main/kotlin")
+
+        val aliasesFile = sourceRoot.resolve("com/example/types/Aliases.kt")
+        Files.createDirectories(aliasesFile.parent)
+        Files.writeString(
+            aliasesFile,
+            """
+            package com.example.types
+
+            import kotlinx.coroutines.flow.StateFlow
+
+            typealias ResultState<T> = StateFlow<Result<T>>
+            """.trimIndent(),
+        )
+
+        val viewModelFile = sourceRoot.resolve("com/example/auth/GenericAliasViewModel.kt")
+        Files.createDirectories(viewModelFile.parent)
+        Files.writeString(
+            viewModelFile,
+            """
+            package com.example.auth
+
+            import androidx.lifecycle.ViewModel
+            import com.example.types.ResultState
+            import kotlinx.coroutines.flow.MutableStateFlow
+            import kotlinx.coroutines.flow.asStateFlow
+
+            data class GenericUiState(val query: String = "")
+
+            class GenericAliasViewModel : ViewModel() {
+                private val _uiState = MutableStateFlow(Result.success(GenericUiState()))
+                val uiState: ResultState<GenericUiState> = _uiState.asStateFlow()
+
+                fun clear() {
+                    _uiState.value = Result.success(GenericUiState())
+                }
+            }
+            """.trimIndent(),
+        )
+
+        val changeSet = ChangeSet(
+            source = ChangeSource.GIT_DIFF,
+            files = listOf(
+                ChangedFile(
+                    path = viewModelFile,
+                    changedSymbols = listOf(
+                        ChangedSymbol(name = "clear", kind = SymbolKind.METHOD),
+                    ),
+                ),
+            ),
+        )
+
+        val analysis = analyzer.analyze(changeSet).single()
+
+        assertEquals(listOf("uiState: StateFlow<Result<GenericUiState>>"), analysis.stateHolders)
+        assertEquals("Result<GenericUiState>", analysis.primaryStateType)
     }
 
     private fun findRepoRoot(): Path {

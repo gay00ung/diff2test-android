@@ -25,18 +25,18 @@ class MainOutputTest {
             className = "LoginViewModel",
             filePath = Path.of("/tmp/LoginViewModel.kt"),
             notes = listOf(
-                "PSI-backed declaration analysis with local import and typealias resolution.",
-                "PSI-backed declaration analysis with local import and typealias resolution.",
-                "Full compiler symbol resolution is still pending.",
+                "Compiler-backed symbol resolution is enabled for same-module Kotlin sources.",
+                "Compiler-backed symbol resolution is enabled for same-module Kotlin sources.",
+                "External dependency resolution may still fall back when classpath symbols are unavailable.",
             ),
         )
 
         val rendered = renderAnalysisWarnings(analysis)
 
         assertContains(rendered.orEmpty(), "Analysis warnings:")
-        assertContains(rendered.orEmpty(), "- PSI-backed declaration analysis with local import and typealias resolution.")
-        assertContains(rendered.orEmpty(), "- Full compiler symbol resolution is still pending.")
-        assertEquals(1, Regex("PSI-backed declaration analysis with local import and typealias resolution\\.").findAll(rendered.orEmpty()).count())
+        assertContains(rendered.orEmpty(), "- Compiler-backed symbol resolution is enabled for same-module Kotlin sources.")
+        assertContains(rendered.orEmpty(), "- External dependency resolution may still fall back when classpath symbols are unavailable.")
+        assertEquals(1, Regex("Compiler-backed symbol resolution is enabled for same-module Kotlin sources\\.").findAll(rendered.orEmpty()).count())
     }
 
     @Test
