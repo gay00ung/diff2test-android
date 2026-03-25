@@ -92,6 +92,7 @@ class D2tConfigTest {
         assertContains(report, "Provider: anthropic")
         assertContains(report, "Supported now: no")
         assertContains(report, "Use `provider = \"custom\"`")
+        assertContains(report, "Native Anthropic and Gemini adapters are not implemented yet.")
     }
 
     @Test

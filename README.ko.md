@@ -132,6 +132,7 @@ d2t verify
 소스에서 직접 실행하는 경우에는 `d2t` 대신 `./d2t`를 사용해주세요.
 
 `auto`는 이제 기본으로 생성 후 검증까지 수행합니다. import나 coroutine test utility 관련 공통 오류에 대해 1회 bounded repair를 시도하려면 `--repair`를 사용해주세요.
+생성된 결과물은 기본 내장 quality gate도 통과해야 하며, placeholder assertion이나 남아 있는 `TODO()`가 있으면 실패로 처리합니다.
 
 현재 analyzer가 symbol resolution 없이 PSI-backed declaration parsing만 사용하는 경우, 관련 명령은 그 경고를 CLI에 그대로 출력합니다.
 

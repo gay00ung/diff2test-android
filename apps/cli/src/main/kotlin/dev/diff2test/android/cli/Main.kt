@@ -21,6 +21,7 @@ import dev.diff2test.android.styleindex.DefaultStyleIndexer
 import dev.diff2test.android.testclassifier.DefaultTestClassifier
 import dev.diff2test.android.testgenerator.AiFailureMode
 import dev.diff2test.android.testgenerator.FileSystemGeneratedTestWriter
+import dev.diff2test.android.testgenerator.GeneratedTestQualityGate
 import dev.diff2test.android.testgenerator.KotlinUnitTestGenerator
 import dev.diff2test.android.testgenerator.ResponsesApiTestGenerator
 import dev.diff2test.android.testgenerator.inferModuleRootFromTarget
@@ -201,7 +202,19 @@ private fun createBundle(
     val plan = createPlan(analysis)
     val styleGuide = DefaultStyleIndexer().index(workspaceRoot)
     val context = DefaultTestContextBuilder().build("app", analysis, styleGuide)
-    return generator.generate(plan, context, analysis)
+    return generator.generate(plan, context, analysis).also(::ensureGeneratedBundleQuality)
+}
+
+private fun ensureGeneratedBundleQuality(bundle: GeneratedTestBundle) {
+    val report = GeneratedTestQualityGate().evaluate(bundle)
+    check(report.passed) {
+        buildString {
+            appendLine("Generated tests failed the quality gate.")
+            report.issues.forEach { issue ->
+                appendLine("- $issue")
+            }
+        }.trimEnd()
+    }
 }
 
 private fun resolveAnalysis(target: String?): ViewModelAnalysis {
@@ -473,6 +486,9 @@ private fun createGenerator(
 
         AiPreference.DISABLED -> KotlinUnitTestGenerator()
         AiPreference.AUTO -> {
+            if (resolvedFromConfig != null && configIssue != null) {
+                error(configIssue)
+            }
             if (config != null && configIssue == null) {
                 println("Using Responses API-compatible test generator (${config.model})")
                 ResponsesApiTestGenerator(
@@ -540,8 +556,10 @@ internal fun renderHelpText(): String {
         appendLine("Verification:")
         appendLine("  auto writes generated tests and verifies them by default")
         appendLine("  --repair enables one bounded repair pass for common import and coroutine test utility failures")
+        appendLine("  generated output must pass the built-in quality gate")
         appendLine("AI:")
         appendLine("  Responses-compatible endpoints only")
+        appendLine("  native Anthropic and Gemini adapters are not implemented yet")
         appendLine("Config:")
         appendLine("  ~/.config/d2t/config.toml")
         appendLine("Legacy env fallback:")

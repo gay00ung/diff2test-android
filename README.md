@@ -132,6 +132,7 @@ d2t verify
 If you are running from source instead of Homebrew, use `./d2t` instead of `d2t`.
 
 `auto` now writes generated tests and verifies them by default. Add `--repair` if you want one bounded repair pass for common import and coroutine-test utility failures.
+Generated output must also pass the built-in quality gate, which rejects placeholder assertions and unresolved `TODO()` scaffolding.
 
 Commands that rely on the current analyzer surface explicit analysis warnings when they are using PSI-backed declaration parsing without symbol resolution.
 
@@ -233,7 +234,7 @@ apps/cli/build/distributions/d2t.zip
 
 - The Kotlin analyzer is PSI-backed, but still lacks symbol resolution for full production fidelity.
 - AI generation currently supports Responses-compatible endpoints only.
-- Native Anthropic `messages` transport is not implemented yet.
+- Native Anthropic and Gemini adapters are not implemented yet.
 - Repair is still bounded and only covers common generated-test import or coroutine utility failures.
 - The MCP app is experimental and not yet a real transport-bound server.
 

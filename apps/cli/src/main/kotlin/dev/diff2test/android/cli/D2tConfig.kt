@@ -188,7 +188,7 @@ internal fun resolveAiConfiguration(
         !apiKeyPresent -> "Environment variable `$apiKeyEnv` is not set."
         model == null -> "Set ai.model in config.toml or pass --model."
         ai.protocol != AiProtocol.RESPONSES_COMPATIBLE ->
-            "Provider `${ai.provider.name.lowercase()}` uses `${ai.protocol.name.lowercase()}` which is not implemented yet. Use `provider = \"custom\"` with `protocol = \"responses-compatible\"` for a compatible endpoint."
+            "Provider `${ai.provider.name.lowercase()}` uses `${ai.protocol.name.lowercase()}` which is not implemented yet. Native Anthropic and Gemini adapters are not implemented yet. Use `provider = \"custom\"` with `protocol = \"responses-compatible\"` for a compatible gateway."
         baseUrl.isNullOrBlank() -> "Set ai.base_url in config.toml."
         else -> null
     }
@@ -290,7 +290,7 @@ enabled = true
 
 # `openai` works out of the box with the official OpenAI Responses API.
 # `custom` is for self-hosted or gateway endpoints that expose a Responses-compatible API.
-# `anthropic` is reserved for a future native adapter; use `custom` if your Anthropic-style gateway is Responses-compatible.
+# `anthropic` is reserved for a future native adapter; use `custom` if your Anthropic-style or Gemini-style gateway is Responses-compatible.
 provider = "openai"
 protocol = "responses-compatible"
 

@@ -46,5 +46,7 @@ class MainOutputTest {
         assertContains(help, "1.0 target: CLI for diff-driven Android ViewModel local unit test generation and verification")
         assertContains(help, "MCP app is experimental and currently prints a catalog only")
         assertContains(help, "Responses-compatible endpoints only")
+        assertContains(help, "generated output must pass the built-in quality gate")
+        assertContains(help, "native Anthropic and Gemini adapters are not implemented yet")
     }
 }
