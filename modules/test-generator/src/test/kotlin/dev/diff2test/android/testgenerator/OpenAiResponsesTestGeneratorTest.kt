@@ -195,6 +195,7 @@ class OpenAiResponsesTestGeneratorTest {
         assertContains(requestBody, "\"responseMimeType\":\"application/json\"")
         assertContains(requestBody, "\"responseSchema\"")
         assertContains(requestBody, "\"contents\"")
+        assertTrue("\"additionalProperties\"" !in requestBody)
     }
 
     @Test

@@ -674,7 +674,7 @@ internal fun buildGeminiGenerateContentRequest(
             "generationConfig",
             buildJsonObject {
                 put("responseMimeType", "application/json")
-                put("responseSchema", structuredPayloadSchema())
+                put("responseSchema", geminiStructuredPayloadSchema())
             },
         )
     }.toString()
@@ -1021,6 +1021,28 @@ internal fun structuredPayloadSchema() = buildJsonObject {
         },
     )
     put("additionalProperties", false)
+}
+
+internal fun geminiStructuredPayloadSchema() = stripAdditionalProperties(structuredPayloadSchema())
+
+private fun stripAdditionalProperties(element: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonElement {
+    return when (element) {
+        is kotlinx.serialization.json.JsonObject ->
+            buildJsonObject {
+                element.forEach { (key, value) ->
+                    if (key != "additionalProperties") {
+                        put(key, stripAdditionalProperties(value))
+                    }
+                }
+            }
+
+        is kotlinx.serialization.json.JsonArray ->
+            buildJsonArray {
+                element.forEach { add(stripAdditionalProperties(it)) }
+            }
+
+        else -> element
+    }
 }
 
 internal fun generatedTestRelativePath(plan: TestPlan, analysis: ViewModelAnalysis): Path {
