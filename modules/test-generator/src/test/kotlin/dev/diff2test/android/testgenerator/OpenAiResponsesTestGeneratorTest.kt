@@ -225,6 +225,30 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `gemini generator sends native header to generate content endpoint`() {
+        val capture = RequestCapture()
+        val generator = GeminiGenerateContentTestGenerator(
+            config = GeminiGenerateContentConfig(
+                apiKey = "sk-gem",
+                model = "gemini-2.5-pro",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+            ),
+            httpClient = capturingHttpClient(capture, 200, geminiResponseBody()),
+        )
+
+        val bundle = generator.generate(plan(), context(), analysis())
+
+        assertContains(bundle.files.single().content, "class SignUpViewModelGeneratedTest")
+        val request = assertNotNull(capture.request)
+        assertEquals(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+            request.uri().toString(),
+        )
+        assertEquals("sk-gem", request.headers().firstValue("x-goog-api-key").orElse(null))
+        assertEquals("application/json", request.headers().firstValue("Accept").orElse(null))
+    }
+
+    @Test
     fun `normalizes junit test imports to kotlin test`() {
         val content = """
             package com.example.auth
@@ -676,6 +700,22 @@ class OpenAiResponsesTestGeneratorTest {
             override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
         }
     }
+
+    private fun geminiResponseBody(): String = """
+        {
+          "candidates": [
+            {
+              "content": {
+                "parts": [
+                  {
+                    "text": "{\"content\":\"package com.example.auth\\n\\nclass SignUpViewModelGeneratedTest\",\"warnings\":[]}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+    """.trimIndent()
 
     private fun anthropicResponseBody(): String = """
         {

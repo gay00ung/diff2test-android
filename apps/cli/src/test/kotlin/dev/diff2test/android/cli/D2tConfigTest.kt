@@ -164,6 +164,27 @@ class D2tConfigTest {
     }
 
     @Test
+    fun `defaults gemini config to native generate content protocol`() {
+        val configFile = Files.createTempFile("d2t-gemini-config", ".toml")
+        Files.writeString(
+            configFile,
+            """
+            [ai]
+            provider = "gemini"
+            """.trimIndent(),
+        )
+        val loadResult = loadConfig(configFile)
+        val resolved = resolveAiConfiguration(loadResult, mapOf("GEMINI_API_KEY" to "sk-gem"))
+
+        assertEquals(AiProvider.GEMINI, resolved?.provider)
+        assertEquals(AiProtocol.GEMINI_GENERATE_CONTENT, resolved?.protocol)
+        assertEquals("GEMINI_API_KEY", resolved?.apiKeyEnv)
+        assertEquals("gemini-2.5-pro", resolved?.model)
+        assertEquals("https://generativelanguage.googleapis.com/v1beta", resolved?.baseUrl)
+        assertTrue(resolved?.supportedByGenerator == true)
+    }
+
+    @Test
     fun `template does not include actual secrets`() {
         val template = defaultConfigTemplate()
 
