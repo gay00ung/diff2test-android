@@ -254,6 +254,45 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `adds common coroutine flow and lifecycle imports used by generated fakes`() {
+        val content = """
+            package net.ifmain.androiddummy.chatbot.ui
+
+            import kotlinx.coroutines.test.StandardTestDispatcher
+            import kotlinx.coroutines.test.runTest
+            import kotlin.test.Test
+            import kotlin.test.assertEquals
+
+            class NutritionChatViewModelGeneratedTest {
+                @Test
+                fun `sendMessage success`() = runTest {
+                    val flow = MutableSharedFlow<String>()
+                    val state = MutableStateFlow("")
+                    val shared: SharedFlow<String> = flow.asSharedFlow()
+                    val values: StateFlow<String> = state.asStateFlow()
+                    values.update { it }
+                    flow.first()
+                    viewModelScope.launch { }
+                    assertEquals(1, 1)
+                }
+            }
+        """.trimIndent()
+
+        val sanitized = sanitizeGeneratedKotlin(content)
+
+        assertContains(sanitized, "import androidx.lifecycle.viewModelScope")
+        assertContains(sanitized, "import kotlinx.coroutines.launch")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.MutableSharedFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.MutableStateFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.SharedFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.StateFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.asSharedFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.asStateFlow")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.update")
+        assertContains(sanitized, "import kotlinx.coroutines.flow.first")
+    }
+
+    @Test
     fun `prompt includes collaborator source when available`() {
         val fixturePath = findRepoRoot()
             .resolve("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt")

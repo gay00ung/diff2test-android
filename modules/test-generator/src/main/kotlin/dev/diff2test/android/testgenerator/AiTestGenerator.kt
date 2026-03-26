@@ -1037,11 +1037,41 @@ private fun stabilizeCoroutineTestBlock(block: String): String {
 
 private fun ensureGeneratedImports(content: String): String {
     val imports = buildList {
+        if ("viewModelScope" in content && "import androidx.lifecycle.viewModelScope" !in content) {
+            add("import androidx.lifecycle.viewModelScope")
+        }
         if (
             ("advanceUntilIdle(" in content || "StandardTestDispatcher(" in content) &&
             "import kotlinx.coroutines.ExperimentalCoroutinesApi" !in content
         ) {
             add("import kotlinx.coroutines.ExperimentalCoroutinesApi")
+        }
+        if (LAUNCH_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.launch" !in content) {
+            add("import kotlinx.coroutines.launch")
+        }
+        if (MUTABLE_STATE_FLOW_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.MutableStateFlow" !in content) {
+            add("import kotlinx.coroutines.flow.MutableStateFlow")
+        }
+        if (STATE_FLOW_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.StateFlow" !in content) {
+            add("import kotlinx.coroutines.flow.StateFlow")
+        }
+        if (MUTABLE_SHARED_FLOW_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.MutableSharedFlow" !in content) {
+            add("import kotlinx.coroutines.flow.MutableSharedFlow")
+        }
+        if (SHARED_FLOW_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.SharedFlow" !in content) {
+            add("import kotlinx.coroutines.flow.SharedFlow")
+        }
+        if ("asStateFlow(" in content && "import kotlinx.coroutines.flow.asStateFlow" !in content) {
+            add("import kotlinx.coroutines.flow.asStateFlow")
+        }
+        if ("asSharedFlow(" in content && "import kotlinx.coroutines.flow.asSharedFlow" !in content) {
+            add("import kotlinx.coroutines.flow.asSharedFlow")
+        }
+        if (UPDATE_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.update" !in content) {
+            add("import kotlinx.coroutines.flow.update")
+        }
+        if (FIRST_PATTERN.containsMatchIn(content) && "import kotlinx.coroutines.flow.first" !in content) {
+            add("import kotlinx.coroutines.flow.first")
         }
         if ("runTest(" in content && "import kotlinx.coroutines.test.runTest" !in content) {
             add("import kotlinx.coroutines.test.runTest")
@@ -1095,3 +1125,10 @@ private val CLASS_DECLARATION_PATTERN = Regex("""(?m)^class\s+\w+""")
 private val GENERATED_TEST_BLOCK_PATTERN = Regex("""@Test[\s\S]*?(?=\n\s*@Test|\n})""")
 private val VIEW_MODEL_CALL_PATTERN = Regex("""viewModel\.\w+\(.*\)""")
 private val STATE_READ_PATTERN = Regex("""viewModel\.\w+\.value""")
+private val LAUNCH_PATTERN = Regex("""(?m)(^|\s)launch\s*\{|\b\w+\.launch\s*\{""")
+private val MUTABLE_STATE_FLOW_PATTERN = Regex("""\bMutableStateFlow\b(?:\s*<[^>]+>)?\s*\(""")
+private val STATE_FLOW_PATTERN = Regex("""\bStateFlow\s*<|\bStateFlow\b""")
+private val MUTABLE_SHARED_FLOW_PATTERN = Regex("""\bMutableSharedFlow\b(?:\s*<[^>]+>)?\s*\(""")
+private val SHARED_FLOW_PATTERN = Regex("""\bSharedFlow\s*<|\bSharedFlow\b""")
+private val UPDATE_PATTERN = Regex("""\.\s*update\s*\{|(?m)^\s*update\s*\{""")
+private val FIRST_PATTERN = Regex("""\.\s*first\s*\(""")

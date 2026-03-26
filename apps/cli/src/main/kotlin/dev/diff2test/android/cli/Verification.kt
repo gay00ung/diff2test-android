@@ -57,14 +57,19 @@ internal fun inferModuleTestTask(moduleRoot: Path): String {
     val normalizedModuleRoot = moduleRoot.toAbsolutePath().normalize()
     val buildRoot = findBuildRoot(normalizedModuleRoot)
     val relativePath = buildRoot.relativize(normalizedModuleRoot)
+    val taskName = if (isAndroidModule(normalizedModuleRoot)) {
+        "testDebugUnitTest"
+    } else {
+        "test"
+    }
 
     if (relativePath.nameCount == 0) {
-        return "test"
+        return taskName
     }
 
     val projectPath = (0 until relativePath.nameCount)
         .joinToString(":") { index -> relativePath.getName(index).toString() }
-    return ":$projectPath:test"
+    return ":$projectPath:$taskName"
 }
 
 internal fun createVerifyRequest(target: GeneratedTestTarget): GradleRunRequest {
@@ -142,4 +147,22 @@ private fun findBuildRoot(start: Path): Path {
     }
 
     return start.toAbsolutePath().normalize()
+}
+
+internal fun isAndroidModule(moduleRoot: Path): Boolean {
+    val buildFiles = listOf(
+        moduleRoot.resolve("build.gradle.kts"),
+        moduleRoot.resolve("build.gradle"),
+    ).filter(Files::exists)
+
+    if (buildFiles.isEmpty()) {
+        return false
+    }
+
+    val buildScript = buildFiles.joinToString("\n") { Files.readString(it) }
+    return "com.android.application" in buildScript ||
+        "com.android.library" in buildScript ||
+        "android.application" in buildScript ||
+        "android.library" in buildScript ||
+        "namespace =" in buildScript && "android {" in buildScript
 }
