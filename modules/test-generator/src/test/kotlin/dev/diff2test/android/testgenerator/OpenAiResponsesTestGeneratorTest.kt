@@ -589,6 +589,66 @@ class OpenAiResponsesTestGeneratorTest {
         assertContains(bundle.warnings.joinToString("\n"), "AI generation was skipped")
     }
 
+    @Test
+    fun `bypasses ai when changed methods miss singleton access but source file contains it`() {
+        val sourceFile = Files.createTempFile("nutrition-chat-viewmodel", ".kt")
+        Files.writeString(
+            sourceFile,
+            """
+                package net.ifmain.androiddummy.chatbot.ui
+
+                class NutritionChatViewModel {
+                    fun onInputChange(input: String) {}
+
+                    fun sendMessage() {
+                        ChatbotService.api.sendMessage(request)
+                    }
+                }
+            """.trimIndent(),
+        )
+
+        val analysis = ViewModelAnalysis(
+            className = "NutritionChatViewModel",
+            packageName = "net.ifmain.androiddummy.chatbot.ui",
+            filePath = sourceFile,
+            publicMethods = listOf(
+                dev.diff2test.android.core.TargetMethod(
+                    name = "onInputChange",
+                    signature = "fun onInputChange(input: String)",
+                    body = "_uiState.update { it }",
+                    mutatesState = true,
+                ),
+            ),
+        )
+        val generator = ChatCompletionsTestGenerator(
+            config = ChatCompletionsConfig(
+                apiKey = "sk-local",
+                model = "qwen3-coder-next-mlx",
+                baseUrl = "http://127.0.0.1:12345/v1",
+            ),
+            httpClient = fakeHttpClient(statusCode = 500, body = "should not be called"),
+        )
+
+        val bundle = generator.generate(
+            plan = TestPlan(
+                targetClass = "NutritionChatViewModel",
+                targetMethods = listOf("onInputChange"),
+                testType = TestType.LOCAL_UNIT,
+                scenarios = emptyList(),
+                requiredFakes = emptyList(),
+                assertions = emptyList(),
+                riskLevel = RiskLevel.LOW,
+            ),
+            context = TestContext(
+                moduleName = "app",
+                styleGuide = StyleGuide(assertionStyle = "junit4", coroutineEntryPoint = "unavailable"),
+            ),
+            analysis = analysis,
+        )
+
+        assertContains(bundle.warnings.joinToString("\n"), "AI generation was skipped")
+    }
+
     private fun findRepoRoot(): Path {
         var current: Path? = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
 
