@@ -23,11 +23,18 @@ class KotlinUnitTestGenerator : TestGenerator {
             "src/test/kotlin/" + packageName.replace('.', '/') + "/$generatedClassName.kt",
         )
         val helper = GeneratedTestHelperBuilder(analysis)
-        val testMethods = buildTestMethods(analysis)
+        val coroutineSupport = context.styleGuide.coroutineEntryPoint == "runTest"
+        val testMethods = buildTestMethods(analysis, coroutineSupport)
         val warnings = mutableListOf<String>()
 
         if (helper.warnings.isNotEmpty()) {
             warnings += helper.warnings
+        }
+        if (!coroutineSupport && analysis.publicMethods.any(::isActionMethod)) {
+            warnings += "This module does not declare kotlinx-coroutines-test, so async ViewModel scenarios were reduced to compile-safe synchronous coverage."
+        }
+        if (analysis.publicMethods.any { usesDirectSingletonAccess(it.body.orEmpty()) }) {
+            warnings += "The ViewModel does not expose injectable collaborators, so collaborator-driven success or failure paths were skipped unless they were compile-safe."
         }
         if (testMethods.isEmpty()) {
             warnings += "No concrete test heuristics matched. Falling back to placeholder generation."
@@ -36,24 +43,38 @@ class KotlinUnitTestGenerator : TestGenerator {
         val content = buildString {
             appendLine("package $packageName")
             appendLine()
-            appendLine("import kotlin.test.Test")
-            appendLine("import kotlin.test.assertEquals")
-            appendLine("import kotlin.test.assertNotNull")
-            appendLine("import kotlin.test.assertNull")
-            appendLine("import kotlin.test.assertTrue")
-            appendLine("import kotlinx.coroutines.ExperimentalCoroutinesApi")
-            appendLine("import kotlinx.coroutines.test.StandardTestDispatcher")
-            appendLine("import kotlinx.coroutines.test.advanceUntilIdle")
-            appendLine("import kotlinx.coroutines.test.runTest")
+            if (context.styleGuide.assertionStyle == "junit4") {
+                appendLine("import org.junit.Test")
+                appendLine("import org.junit.Assert.assertEquals")
+                appendLine("import org.junit.Assert.assertNotNull")
+                appendLine("import org.junit.Assert.assertNull")
+                appendLine("import org.junit.Assert.assertTrue")
+            } else {
+                appendLine("import kotlin.test.Test")
+                appendLine("import kotlin.test.assertEquals")
+                appendLine("import kotlin.test.assertNotNull")
+                appendLine("import kotlin.test.assertNull")
+                appendLine("import kotlin.test.assertTrue")
+            }
+            if (context.styleGuide.coroutineEntryPoint == "runTest") {
+                appendLine("import kotlinx.coroutines.ExperimentalCoroutinesApi")
+                appendLine("import kotlinx.coroutines.test.StandardTestDispatcher")
+                appendLine("import kotlinx.coroutines.test.advanceUntilIdle")
+                appendLine("import kotlinx.coroutines.test.runTest")
+            }
             helper.imports.sorted().forEach { importLine ->
                 appendLine(importLine)
             }
             appendLine()
-            appendLine("@OptIn(ExperimentalCoroutinesApi::class)")
+            if (context.styleGuide.coroutineEntryPoint == "runTest") {
+                appendLine("@OptIn(ExperimentalCoroutinesApi::class)")
+            }
             appendLine("class $generatedClassName {")
             appendLine()
-            appendLine("    private val testDispatcher = StandardTestDispatcher()")
-            appendLine()
+            if (context.styleGuide.coroutineEntryPoint == "runTest") {
+                appendLine("    private val testDispatcher = StandardTestDispatcher()")
+                appendLine()
+            }
 
             helper.declarations.forEach { declaration ->
                 declaration.lines().forEach { declarationLine ->
@@ -108,18 +129,23 @@ private data class RenderedTestMethod(
     }
 }
 
-private fun buildTestMethods(analysis: ViewModelAnalysis): List<RenderedTestMethod> {
+private fun buildTestMethods(analysis: ViewModelAnalysis, coroutineSupport: Boolean): List<RenderedTestMethod> {
     val methods = mutableListOf<RenderedTestMethod>()
     val stateHolder = analysis.primaryStateHolderName ?: "uiState"
     val successAction = analysis.publicMethods.firstOrNull(::isActionMethod)
+    val sourceText = if (Files.exists(analysis.filePath)) {
+        Files.readString(analysis.filePath)
+    } else {
+        ""
+    }
 
-    if (analysis.primaryStateType != null) {
+    analysis.primaryStateType?.let { primaryStateType ->
         methods += RenderedTestMethod(
             lines = listOf(
                 "@Test",
-                "fun `initial state is stable`() = runTest(testDispatcher) {",
+                testMethodSignature("initial state is stable", coroutineSupport),
                 "    val viewModel = createViewModel()",
-                "    assertEquals(${analysis.primaryStateType}(), viewModel.$stateHolder.value)",
+                initialStateAssertion(primaryStateType, stateHolder, sourceText),
                 "}",
             ),
         )
@@ -127,20 +153,20 @@ private fun buildTestMethods(analysis: ViewModelAnalysis): List<RenderedTestMeth
 
     analysis.publicMethods.forEach { method ->
         setterPropertyName(method)?.let { propertyName ->
-            methods += buildSetterTest(method, analysis, propertyName)
+            methods += buildSetterTest(method, analysis, propertyName, coroutineSupport)
             return@forEach
         }
 
         if (isClearErrorMethod(method)) {
-            buildClearErrorTest(method, analysis, successAction)?.let(methods::add)
+            buildClearErrorTest(method, analysis, successAction, coroutineSupport)?.let(methods::add)
             return@forEach
         }
 
-        buildEventEmissionTest(method, analysis)?.let(methods::add)
+        buildEventEmissionTest(method, analysis, coroutineSupport)?.let(methods::add)
 
         if (isActionMethod(method)) {
-            buildValidationTest(method, analysis)?.let(methods::add)
-            buildSuccessActionTest(method, analysis)?.let(methods::add)
+            buildValidationTest(method, analysis, coroutineSupport)?.let(methods::add)
+            buildSuccessActionTest(method, analysis, coroutineSupport)?.let(methods::add)
         }
     }
 
@@ -151,6 +177,7 @@ private fun buildSetterTest(
     method: TargetMethod,
     analysis: ViewModelAnalysis,
     propertyName: String,
+    coroutineSupport: Boolean,
 ): RenderedTestMethod {
     val sampleInput = sampleInputForProperty(propertyName)
     val expected = transformInputByMethodBody(sampleInput, method.body.orEmpty())
@@ -164,7 +191,7 @@ private fun buildSetterTest(
     return RenderedTestMethod(
         lines = buildList {
             add("@Test")
-            add("fun `${method.name} updates $propertyName in state`() = runTest(testDispatcher) {")
+            add(testMethodSignature("${method.name} updates $propertyName in state", coroutineSupport))
             add("    val viewModel = createViewModel()")
             add("    viewModel.${method.name}(${quote(sampleInput)})")
             assertions.forEach { add("    $it") }
@@ -177,6 +204,7 @@ private fun buildClearErrorTest(
     method: TargetMethod,
     analysis: ViewModelAnalysis,
     actionMethod: TargetMethod?,
+    coroutineSupport: Boolean,
 ): RenderedTestMethod? {
     val stateHolder = analysis.primaryStateHolderName ?: "uiState"
     val triggerMethod = actionMethod ?: return null
@@ -184,7 +212,7 @@ private fun buildClearErrorTest(
     return RenderedTestMethod(
         lines = listOf(
             "@Test",
-            "fun `${method.name} clears an existing error`() = runTest(testDispatcher) {",
+            testMethodSignature("${method.name} clears an existing error", coroutineSupport),
             "    val viewModel = createViewModel()",
             "    viewModel.${triggerMethod.name}()",
             "    assertNotNull(viewModel.$stateHolder.value.errorMessage)",
@@ -198,26 +226,58 @@ private fun buildClearErrorTest(
 private fun buildValidationTest(
     method: TargetMethod,
     analysis: ViewModelAnalysis,
+    coroutineSupport: Boolean,
 ): RenderedTestMethod? {
-    val validationMessage = extractErrorMessage(method.body.orEmpty()) ?: return null
+    val body = method.body.orEmpty()
+    val validationMessage = extractErrorMessage(body)
     val stateHolder = analysis.primaryStateHolderName ?: "uiState"
 
-    return RenderedTestMethod(
-        lines = listOf(
-            "@Test",
-            "fun `${method.name} exposes validation error for invalid input`() = runTest(testDispatcher) {",
-            "    val viewModel = createViewModel()",
-            "    viewModel.${method.name}()",
-            "    assertEquals(${quote(validationMessage)}, viewModel.$stateHolder.value.errorMessage)",
-            "}",
-        ),
-    )
+    if (validationMessage != null) {
+        return RenderedTestMethod(
+            lines = listOf(
+                "@Test",
+                testMethodSignature("${method.name} exposes validation error for invalid input", coroutineSupport),
+                "    val viewModel = createViewModel()",
+                "    viewModel.${method.name}()",
+                "    assertEquals(${quote(validationMessage)}, viewModel.$stateHolder.value.errorMessage)",
+                "}",
+            ),
+        )
+    }
+
+    if ("isBlank()" in body && !coroutineSupport) {
+        val setterCalls = availableSetterMethods(analysis)
+            .map { (methodName, propertyName) ->
+                "    viewModel.$methodName(${quote(blankInputForProperty(propertyName))})"
+            }
+        if (setterCalls.isNotEmpty()) {
+            return RenderedTestMethod(
+                lines = buildList {
+                    add("@Test")
+                    add(testMethodSignature("${method.name} ignores blank input without changing state", coroutineSupport))
+                    add("    val viewModel = createViewModel()")
+                    addAll(setterCalls)
+                    add("    val before = viewModel.$stateHolder.value")
+                    add("    viewModel.${method.name}()")
+                    add("    val after = viewModel.$stateHolder.value")
+                    add("    assertEquals(before, after)")
+                    add("}")
+                },
+            )
+        }
+    }
+
+    return null
 }
 
 private fun buildSuccessActionTest(
     method: TargetMethod,
     analysis: ViewModelAnalysis,
+    coroutineSupport: Boolean,
 ): RenderedTestMethod? {
+    if (!coroutineSupport || usesDirectSingletonAccess(method.body.orEmpty())) {
+        return null
+    }
     val successProperty = extractSuccessStateProperty(method.body.orEmpty()) ?: return null
     val setterCalls = availableSetterMethods(analysis)
         .map { (methodName, propertyName) ->
@@ -229,7 +289,7 @@ private fun buildSuccessActionTest(
     return RenderedTestMethod(
         lines = buildList {
             add("@Test")
-            add("fun `${method.name} updates success state when collaborators succeed`() = runTest(testDispatcher) {")
+            add(testMethodSignature("${method.name} updates success state when collaborators succeed", coroutineSupport))
             add("    val viewModel = createViewModel()")
             addAll(setterCalls)
             add("    viewModel.${method.name}()")
@@ -243,7 +303,11 @@ private fun buildSuccessActionTest(
 private fun buildEventEmissionTest(
     method: TargetMethod,
     analysis: ViewModelAnalysis,
+    coroutineSupport: Boolean,
 ): RenderedTestMethod? {
+    if (!coroutineSupport || usesDirectSingletonAccess(method.body.orEmpty())) {
+        return null
+    }
     val body = method.body.orEmpty()
     val sharedFlowHolderName = sharedFlowHolderName(analysis) ?: return null
     if (!supportsReplayCacheEventAssertion(analysis)) {
@@ -259,7 +323,7 @@ private fun buildEventEmissionTest(
     return RenderedTestMethod(
         lines = buildList {
             add("@Test")
-            add("fun `${method.name} emits the expected event`() = runTest(testDispatcher) {")
+            add(testMethodSignature("${method.name} emits the expected event", coroutineSupport))
             add("    val viewModel = createViewModel()")
             addAll(setterCalls)
             add("    viewModel.${method.name}()")
@@ -270,6 +334,14 @@ private fun buildEventEmissionTest(
             add("}")
         },
     )
+}
+
+private fun testMethodSignature(name: String, coroutineSupport: Boolean): String {
+    return if (coroutineSupport) {
+        "fun `$name`() = runTest(testDispatcher) {"
+    } else {
+        "fun `$name`() {"
+    }
 }
 
 private fun availableSetterMethods(analysis: ViewModelAnalysis): List<Pair<String, String>> {
@@ -339,6 +411,13 @@ private fun sampleInputForProperty(propertyName: String): String {
     }
 }
 
+private fun blankInputForProperty(propertyName: String): String {
+    return when (propertyName) {
+        "input", "inputText", "query", "message", "email", "password" -> "   "
+        else -> ""
+    }
+}
+
 private fun validInputForProperty(propertyName: String): String {
     return when (propertyName) {
         "email" -> "user@example.com"
@@ -347,6 +426,14 @@ private fun validInputForProperty(propertyName: String): String {
         "nickname" -> "codexUser"
         "bio" -> "Android engineer"
         else -> "valid-${propertyName.lowercase(Locale.ROOT)}"
+    }
+}
+
+private fun initialStateAssertion(stateType: String, stateHolder: String, sourceText: String): String {
+    return if ("System.currentTimeMillis()" in sourceText) {
+        "assertNotNull(viewModel.$stateHolder.value)"
+    } else {
+        "assertEquals($stateType(), viewModel.$stateHolder.value)"
     }
 }
 
@@ -374,6 +461,10 @@ private fun extractSuccessStateProperty(body: String): String? {
         .firstOrNull { candidate ->
             candidate !in setOf("isLoading", "isSubmitting", "isSaving")
         }
+}
+
+private fun usesDirectSingletonAccess(body: String): Boolean {
+    return Regex("""\b[A-Z][A-Za-z0-9_]*\.[a-z][A-Za-z0-9_]*""").containsMatchIn(body)
 }
 
 private class GeneratedTestHelperBuilder(

@@ -196,7 +196,7 @@ private fun runVerify(task: String?) {
 }
 
 private fun createPlan(analysis: ViewModelAnalysis): TestPlan {
-    val styleGuide = DefaultStyleIndexer().index(workspaceRoot)
+    val styleGuide = DefaultStyleIndexer().index(inferModuleRootFromTarget(analysis.filePath))
     val context = DefaultTestContextBuilder().build("app", analysis, styleGuide)
     val testType = DefaultTestClassifier().classify(analysis, context)
     return DefaultTestPlanner().plan(analysis, context, testType)
@@ -207,13 +207,13 @@ private fun createBundle(
     generator: dev.diff2test.android.testgenerator.TestGenerator = KotlinUnitTestGenerator(),
 ): GeneratedTestBundle {
     val plan = createPlan(analysis)
-    val styleGuide = DefaultStyleIndexer().index(workspaceRoot)
+    val styleGuide = DefaultStyleIndexer().index(inferModuleRootFromTarget(analysis.filePath))
     val context = DefaultTestContextBuilder().build("app", analysis, styleGuide)
-    return generator.generate(plan, context, analysis).also(::ensureGeneratedBundleQuality)
+    return generator.generate(plan, context, analysis).also { ensureGeneratedBundleQuality(it, styleGuide) }
 }
 
-private fun ensureGeneratedBundleQuality(bundle: GeneratedTestBundle) {
-    val report = GeneratedTestQualityGate().evaluate(bundle)
+private fun ensureGeneratedBundleQuality(bundle: GeneratedTestBundle, styleGuide: dev.diff2test.android.core.StyleGuide) {
+    val report = GeneratedTestQualityGate().evaluate(bundle, styleGuide)
     check(report.passed) {
         buildString {
             appendLine("Generated tests failed the quality gate.")
@@ -488,7 +488,11 @@ private fun createGenerator(
                 val configured = createConfiguredGenerator(
                     resolved = resolvedFromConfig,
                     environment = System.getenv(),
-                    failureMode = AiFailureMode.FAIL_CLOSED,
+                    failureMode = if (strictAi) {
+                        AiFailureMode.FAIL_CLOSED
+                    } else {
+                        AiFailureMode.FALLBACK_TO_HEURISTIC
+                    },
                 ) ?: error(configIssue ?: "Config could not be resolved.")
                 println("Using ${configured.description} (${configured.model})")
                 return configured.generator
@@ -497,7 +501,14 @@ private fun createGenerator(
                 "--ai requires a valid config file or one of D2T_AI_AUTH_TOKEN, LLM_API_KEY, ANTHROPIC_AUTH_TOKEN, D2T_OPENAI_API_KEY, or OPENAI_API_KEY."
             }
             println("Using Responses API-compatible test generator (${config.model})")
-            ResponsesApiTestGenerator(config = config, failureMode = AiFailureMode.FAIL_CLOSED)
+            ResponsesApiTestGenerator(
+                config = config,
+                failureMode = if (strictAi) {
+                    AiFailureMode.FAIL_CLOSED
+                } else {
+                    AiFailureMode.FALLBACK_TO_HEURISTIC
+                },
+            )
         }
 
         AiPreference.DISABLED -> KotlinUnitTestGenerator()

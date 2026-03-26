@@ -2,6 +2,7 @@ package dev.diff2test.android.testgenerator
 
 import dev.diff2test.android.core.GeneratedFile
 import dev.diff2test.android.core.GeneratedTestBundle
+import dev.diff2test.android.core.StyleGuide
 import dev.diff2test.android.core.TestContext
 import dev.diff2test.android.core.TestPlan
 import dev.diff2test.android.core.ViewModelAnalysis
@@ -149,6 +150,7 @@ class ResponsesApiTestGenerator(
         context: TestContext,
         analysis: ViewModelAnalysis,
     ): GeneratedTestBundle {
+        maybeBypassAi(plan, context, analysis, fallback)?.let { return it }
         val startedAt = System.nanoTime()
         return try {
             val promptSpec = buildPromptSpec(plan, context, analysis)
@@ -167,15 +169,24 @@ class ResponsesApiTestGenerator(
                 "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
             )
 
-            GeneratedTestBundle(
+            val generatedBundle = GeneratedTestBundle(
                 plan = plan,
                 files = listOf(
                     GeneratedFile(
                         relativePath = generatedTestRelativePath(plan, analysis),
-                        content = sanitizeGeneratedKotlin(payload.content),
+                        content = sanitizeGeneratedKotlin(payload.content, context.styleGuide),
                     ),
                 ),
                 warnings = payload.warnings,
+            )
+            validateOrFallback(
+                generatedBundle = generatedBundle,
+                plan = plan,
+                context = context,
+                analysis = analysis,
+                startedAt = startedAt,
+                fallback = fallback,
+                failureMode = failureMode,
             )
         } catch (error: Exception) {
             logAiProgress(
@@ -233,6 +244,7 @@ class ChatCompletionsTestGenerator(
         context: TestContext,
         analysis: ViewModelAnalysis,
     ): GeneratedTestBundle {
+        maybeBypassAi(plan, context, analysis, fallback)?.let { return it }
         val startedAt = System.nanoTime()
         return try {
             val promptSpec = buildPromptSpec(plan, context, analysis)
@@ -251,15 +263,24 @@ class ChatCompletionsTestGenerator(
                 "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
             )
 
-            GeneratedTestBundle(
+            val generatedBundle = GeneratedTestBundle(
                 plan = plan,
                 files = listOf(
                     GeneratedFile(
                         relativePath = generatedTestRelativePath(plan, analysis),
-                        content = sanitizeGeneratedKotlin(payload.content),
+                        content = sanitizeGeneratedKotlin(payload.content, context.styleGuide),
                     ),
                 ),
                 warnings = payload.warnings,
+            )
+            validateOrFallback(
+                generatedBundle = generatedBundle,
+                plan = plan,
+                context = context,
+                analysis = analysis,
+                startedAt = startedAt,
+                fallback = fallback,
+                failureMode = failureMode,
             )
         } catch (error: Exception) {
             logAiProgress(
@@ -313,6 +334,7 @@ class AnthropicMessagesTestGenerator(
         context: TestContext,
         analysis: ViewModelAnalysis,
     ): GeneratedTestBundle {
+        maybeBypassAi(plan, context, analysis, fallback)?.let { return it }
         val startedAt = System.nanoTime()
         return try {
             val promptSpec = buildPromptSpec(plan, context, analysis)
@@ -331,15 +353,24 @@ class AnthropicMessagesTestGenerator(
                 "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
             )
 
-            GeneratedTestBundle(
+            val generatedBundle = GeneratedTestBundle(
                 plan = plan,
                 files = listOf(
                     GeneratedFile(
                         relativePath = generatedTestRelativePath(plan, analysis),
-                        content = sanitizeGeneratedKotlin(payload.content),
+                        content = sanitizeGeneratedKotlin(payload.content, context.styleGuide),
                     ),
                 ),
                 warnings = payload.warnings,
+            )
+            validateOrFallback(
+                generatedBundle = generatedBundle,
+                plan = plan,
+                context = context,
+                analysis = analysis,
+                startedAt = startedAt,
+                fallback = fallback,
+                failureMode = failureMode,
             )
         } catch (error: Exception) {
             logAiProgress(
@@ -394,6 +425,7 @@ class GeminiGenerateContentTestGenerator(
         context: TestContext,
         analysis: ViewModelAnalysis,
     ): GeneratedTestBundle {
+        maybeBypassAi(plan, context, analysis, fallback)?.let { return it }
         val startedAt = System.nanoTime()
         return try {
             val promptSpec = buildPromptSpec(plan, context, analysis)
@@ -412,15 +444,24 @@ class GeminiGenerateContentTestGenerator(
                 "structured payload parsed: warnings=${payload.warnings.size}, output=${payload.content.length} chars",
             )
 
-            GeneratedTestBundle(
+            val generatedBundle = GeneratedTestBundle(
                 plan = plan,
                 files = listOf(
                     GeneratedFile(
                         relativePath = generatedTestRelativePath(plan, analysis),
-                        content = sanitizeGeneratedKotlin(payload.content),
+                        content = sanitizeGeneratedKotlin(payload.content, context.styleGuide),
                     ),
                 ),
                 warnings = payload.warnings,
+            )
+            validateOrFallback(
+                generatedBundle = generatedBundle,
+                plan = plan,
+                context = context,
+                analysis = analysis,
+                startedAt = startedAt,
+                fallback = fallback,
+                failureMode = failureMode,
             )
         } catch (error: Exception) {
             logAiProgress(
@@ -554,6 +595,20 @@ internal fun buildChatCompletionsRequest(
         put("model", config.model)
         put("temperature", 0)
         put(
+            "response_format",
+            buildJsonObject {
+                put("type", "json_schema")
+                put(
+                    "json_schema",
+                    buildJsonObject {
+                        put("name", "generated_viewmodel_test")
+                        put("strict", true)
+                        put("schema", structuredPayloadSchema())
+                    },
+                )
+            },
+        )
+        put(
             "messages",
             buildJsonArray {
                 add(
@@ -573,6 +628,7 @@ internal fun buildChatCompletionsRequest(
     }.toString()
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun buildGeminiGenerateContentRequest(
     config: GeminiGenerateContentConfig,
     instructions: String,
@@ -647,7 +703,7 @@ internal fun buildPromptSpec(
         "Generate Kotlin tests from a TestPlan."
     }
     val sourceText = Files.readString(analysis.filePath)
-    val dependencySources = loadDependencySources(analysis)
+    val dependencySources = loadDependencySources(analysis, sourceText)
     val targetClassName = "${analysis.className}GeneratedTest"
     val targetRelativePath = generatedTestRelativePath(plan, analysis)
 
@@ -662,7 +718,24 @@ internal fun buildPromptSpec(
         appendLine("Prefer constructor-injected fakes over Android runtime dependencies.")
         appendLine("If information is missing, prefer focused fake implementations and record caveats in `warnings` instead of inventing APIs.")
         appendLine("When dependency source is provided, preserve its method names, parameter lists, and exact return types in all stubs and mocks.")
-        appendLine("Use `kotlin.test.Test` and `kotlin.test` assertions. Do not use `org.junit.Test`.")
+        if (context.styleGuide.assertionStyle == "junit4") {
+            appendLine("Use `org.junit.Test` and `org.junit.Assert.*` assertions. Do not use `kotlin.test`.")
+        } else {
+            appendLine("Use `kotlin.test.Test` and `kotlin.test` assertions. Do not use `org.junit.Test`.")
+        }
+        if (context.styleGuide.coroutineEntryPoint == "runTest") {
+            appendLine("Use `runTest`, `StandardTestDispatcher`, and `advanceUntilIdle` when coroutine control is needed.")
+        } else {
+            appendLine("This module does not declare `kotlinx-coroutines-test`.")
+            appendLine("Do not use `runTest`, `StandardTestDispatcher`, `testScheduler`, or `advanceUntilIdle`.")
+            appendLine("Only generate compile-safe tests that rely on the existing project test stack.")
+            appendLine("If async behavior requires coroutine-test support or injectable dispatchers, record that as a warning and skip the unsupported scenario.")
+        }
+        appendLine("Do not create a nested class with the same name as the target ViewModel.")
+        appendLine("Do not subclass the target ViewModel or override its members unless the source explicitly declares the class and members as open.")
+        appendLine("If the ViewModel has no injectable collaborators and directly accesses global singletons or objects, do not invent injectable seams.")
+        appendLine("In that case, only test compile-safe public behavior and explain unsupported scenarios in `warnings`.")
+        appendLine("Never reference nested collaborator types that do not appear in the provided source, such as inventing `SomeObject.Api` when only a top-level interface exists.")
     }
 
     val input = buildString {
@@ -738,11 +811,16 @@ internal fun buildPromptSpec(
         appendLine("## Output requirements")
         appendLine("- use package `${analysis.packageName}`")
         appendLine("- class name must be `$targetClassName`")
-        appendLine("- prefer `runTest` and `StandardTestDispatcher`")
+        if (context.styleGuide.coroutineEntryPoint == "runTest") {
+            appendLine("- prefer `runTest` and `StandardTestDispatcher`")
+        } else {
+            appendLine("- do not use kotlinx.coroutines.test APIs because the module does not declare them")
+        }
         appendLine("- assert observable state or event outcomes")
         appendLine("- include at least one negative-path test if the source shows validation or failure handling")
         appendLine("- do not emit placeholder `assertTrue(true)` tests")
         appendLine("- do not emit markdown fences in `content`")
+        appendLine("- do not redefine or subclass `${analysis.className}` inside the generated test file")
     }
 
     return AiPromptSpec(
@@ -753,12 +831,49 @@ internal fun buildPromptSpec(
 
 private fun loadDependencySources(
     analysis: ViewModelAnalysis,
+    sourceText: String,
 ): List<Pair<String, String>> {
     val moduleRoot = inferModuleRootFromTarget(analysis.filePath)
-    return analysis.constructorDependencies.mapNotNull { dependency ->
-        val sourceFile = resolveTypeFile(moduleRoot, dependency.type) ?: return@mapNotNull null
-        dependency.type to Files.readString(sourceFile)
+    val dependencySources = linkedMapOf<String, String>()
+    analysis.constructorDependencies.forEach { dependency ->
+        val sourceFile = resolveTypeFile(moduleRoot, dependency.type) ?: return@forEach
+        dependencySources.putIfAbsent(dependency.type, Files.readString(sourceFile))
     }
+    loadReferencedLocalSources(moduleRoot, analysis, sourceText).forEach { (typeName, contents) ->
+        dependencySources.putIfAbsent(typeName, contents)
+    }
+    return dependencySources.entries.map { it.toPair() }
+}
+
+private fun loadReferencedLocalSources(
+    moduleRoot: Path,
+    analysis: ViewModelAnalysis,
+    sourceText: String,
+): List<Pair<String, String>> {
+    val packagePrefix = analysis.packageName.substringBeforeLast('.', missingDelimiterValue = analysis.packageName)
+    return sourceText.lineSequence()
+        .map(String::trim)
+        .filter { it.startsWith("import ") }
+        .map { it.removePrefix("import ").trim() }
+        .filter { importName ->
+            importName.isNotBlank() &&
+                !importName.startsWith("android.") &&
+                !importName.startsWith("androidx.") &&
+                !importName.startsWith("java.") &&
+                !importName.startsWith("javax.") &&
+                !importName.startsWith("kotlin.") &&
+                !importName.startsWith("kotlinx.") &&
+                !importName.startsWith("retrofit2.") &&
+                !importName.startsWith("okhttp3.") &&
+                (packagePrefix.isBlank() || importName.startsWith(packagePrefix))
+        }
+        .mapNotNull { importName ->
+            val typeName = importName.substringAfterLast('.')
+            val sourceFile = resolveTypeFile(moduleRoot, typeName) ?: return@mapNotNull null
+            if (sourceFile == analysis.filePath) return@mapNotNull null
+            typeName to Files.readString(sourceFile)
+        }
+        .toList()
 }
 
 internal fun extractStructuredPayload(responseBody: String): StructuredTestPayload {
@@ -821,7 +936,7 @@ internal fun extractGeminiStructuredPayload(responseBody: String): StructuredTes
 }
 
 internal fun extractStructuredPayloadFromText(text: String): StructuredTestPayload {
-    val normalizedText = sanitizeGeneratedJson(text)
+    val normalizedText = sanitizeGeneratedJson(extractLikelyJsonObject(text))
 
     val payload = Json.parseToJsonElement(normalizedText).jsonObject
     val content = payload["content"]?.jsonPrimitive?.contentOrNull
@@ -834,6 +949,42 @@ internal fun extractStructuredPayloadFromText(text: String): StructuredTestPaylo
         content = sanitizeGeneratedKotlin(content),
         warnings = warnings,
     )
+}
+
+internal fun extractLikelyJsonObject(text: String): String {
+    val trimmed = text.trim()
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        return trimmed
+    }
+
+    val start = trimmed.indexOf('{')
+    if (start < 0) {
+        return trimmed
+    }
+
+    var depth = 0
+    var inString = false
+    var escaping = false
+    for (index in start until trimmed.length) {
+        val char = trimmed[index]
+        if (escaping) {
+            escaping = false
+            continue
+        }
+        when {
+            char == '\\' && inString -> escaping = true
+            char == '"' -> inString = !inString
+            !inString && char == '{' -> depth += 1
+            !inString && char == '}' -> {
+                depth -= 1
+                if (depth == 0) {
+                    return trimmed.substring(start, index + 1)
+                }
+            }
+        }
+    }
+
+    return trimmed
 }
 
 internal fun structuredPayloadSchema() = buildJsonObject {
@@ -886,7 +1037,7 @@ private fun extractOutputText(item: kotlinx.serialization.json.JsonElement): Str
     }
 }
 
-internal fun sanitizeGeneratedKotlin(content: String): String {
+internal fun sanitizeGeneratedKotlin(content: String, styleGuide: StyleGuide = StyleGuide()): String {
     val trimmed = content.trim()
     val sanitized = if (trimmed.startsWith("```")) {
         trimmed
@@ -897,19 +1048,101 @@ internal fun sanitizeGeneratedKotlin(content: String): String {
     } else {
         trimmed
     }
+    val normalizedAssertions = normalizeAssertionStyle(
+        sanitized
+            .replace("import kotlinx.coroutines.runTest\n", "")
+            .replace("this@TestScope", "testScheduler"),
+        styleGuide,
+    )
+
     return ensureGeneratedImports(
         normalizeImports(
             ensureExperimentalCoroutinesOptIn(
                 stabilizeCoroutineTestPatterns(
-                    sanitized
-                        .replace("import org.junit.Test", "import kotlin.test.Test")
-                        .replace("import org.junit.jupiter.api.Test", "import kotlin.test.Test")
-                        .replace("import kotlinx.coroutines.runTest\n", "")
-                        .replace("this@TestScope", "testScheduler"),
+                    normalizedAssertions,
                 ),
             ),
         ),
     )
+}
+
+private fun AiFailureMode.shouldFailClosed(): Boolean = this == AiFailureMode.FAIL_CLOSED
+
+private fun <T> elapsedFailure(startedAt: Long, message: String, error: Exception): Nothing {
+    logAiProgress("request failed after ${elapsedMillis(startedAt)}ms: $message")
+    throw IllegalStateException(message, error)
+}
+
+private fun maybeBypassAi(
+    plan: TestPlan,
+    context: TestContext,
+    analysis: ViewModelAnalysis,
+    fallback: TestGenerator,
+): GeneratedTestBundle? {
+    val usesDirectSingleton = analysis.publicMethods.any { method ->
+        Regex("""\b[A-Z][A-Za-z0-9_]*\.[a-z][A-Za-z0-9_]*""").containsMatchIn(method.body.orEmpty())
+    }
+    if (context.styleGuide.coroutineEntryPoint == "runTest" || !usesDirectSingleton) {
+        return null
+    }
+
+    val fallbackBundle = fallback.generate(plan, context, analysis)
+    return fallbackBundle.copy(
+        warnings = listOf(
+            "AI generation was skipped because the module does not declare kotlinx-coroutines-test and the ViewModel directly accesses global singleton collaborators. Heuristic generation was used instead.",
+        ) + fallbackBundle.warnings,
+    )
+}
+
+private fun validateOrFallback(
+    generatedBundle: GeneratedTestBundle,
+    plan: TestPlan,
+    context: TestContext,
+    analysis: ViewModelAnalysis,
+    startedAt: Long,
+    fallback: TestGenerator = KotlinUnitTestGenerator(),
+    failureMode: AiFailureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
+): GeneratedTestBundle {
+    val qualityReport = GeneratedTestQualityGate().evaluate(generatedBundle, context.styleGuide)
+    if (qualityReport.passed) {
+        return generatedBundle
+    }
+
+    val summary = qualityReport.issues.joinToString("; ")
+    logAiProgress("quality gate rejected AI output after ${elapsedMillis(startedAt)}ms: $summary")
+
+    if (failureMode.shouldFailClosed()) {
+        throw IllegalStateException(
+            buildString {
+                appendLine("AI generation failed the quality gate.")
+                qualityReport.issues.forEach { appendLine("- $it") }
+            }.trimEnd(),
+        )
+    }
+
+    val fallbackBundle = fallback.generate(plan, context, analysis)
+    return fallbackBundle.copy(
+        warnings = listOf(
+            "AI output failed the quality gate and was replaced with heuristic generation: $summary",
+        ) + generatedBundle.warnings + fallbackBundle.warnings,
+    )
+}
+
+private fun normalizeAssertionStyle(content: String, styleGuide: StyleGuide): String {
+    return if (styleGuide.assertionStyle == "junit4") {
+        content
+            .replace("import kotlin.test.Test", "import org.junit.Test")
+            .replace("import kotlin.test.assertEquals", "import org.junit.Assert.assertEquals")
+            .replace("import kotlin.test.assertTrue", "import org.junit.Assert.assertTrue")
+            .replace("import kotlin.test.assertFalse", "import org.junit.Assert.assertFalse")
+            .replace("import kotlin.test.assertNull", "import org.junit.Assert.assertNull")
+            .replace("import kotlin.test.assertNotNull", "import org.junit.Assert.assertNotNull")
+            .replace("import org.junit.jupiter.api.Test", "import org.junit.Test")
+    } else {
+        content
+            .replace("import org.junit.Test", "import kotlin.test.Test")
+            .replace("import org.junit.jupiter.api.Test", "import kotlin.test.Test")
+    }
 }
 
 internal fun sanitizeGeneratedJson(content: String): String {

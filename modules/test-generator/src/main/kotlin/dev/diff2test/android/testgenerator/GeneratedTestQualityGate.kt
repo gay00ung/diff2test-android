@@ -2,6 +2,7 @@ package dev.diff2test.android.testgenerator
 
 import dev.diff2test.android.core.GeneratedFile
 import dev.diff2test.android.core.GeneratedTestBundle
+import dev.diff2test.android.core.StyleGuide
 
 data class GeneratedTestQualityReport(
     val passed: Boolean,
@@ -9,7 +10,7 @@ data class GeneratedTestQualityReport(
 )
 
 class GeneratedTestQualityGate {
-    fun evaluate(bundle: GeneratedTestBundle): GeneratedTestQualityReport {
+    fun evaluate(bundle: GeneratedTestBundle, styleGuide: StyleGuide = StyleGuide()): GeneratedTestQualityReport {
         val issues = buildList {
             if (bundle.files.isEmpty()) {
                 add("Generator did not produce any test files.")
@@ -29,7 +30,7 @@ class GeneratedTestQualityGate {
             }
 
             bundle.files.forEach { file ->
-                addAll(checkFile(file))
+                addAll(checkFile(file, styleGuide))
             }
         }.distinct()
 
@@ -39,7 +40,7 @@ class GeneratedTestQualityGate {
         )
     }
 
-    private fun checkFile(file: GeneratedFile): List<String> {
+    private fun checkFile(file: GeneratedFile, styleGuide: StyleGuide): List<String> {
         val content = file.content
         val issues = mutableListOf<String>()
 
@@ -71,6 +72,17 @@ class GeneratedTestQualityGate {
             issues += "${file.relativePath}: using cancel() to finish coroutine work is not allowed."
         }
 
+        if (
+            styleGuide.coroutineEntryPoint != "runTest" &&
+            (RUN_TEST_API_PATTERN.containsMatchIn(content) || TEST_DISPATCHER_API_PATTERN.containsMatchIn(content))
+        ) {
+            issues += "${file.relativePath}: module does not declare kotlinx-coroutines-test, but generated output still uses coroutine-test APIs."
+        }
+
+        duplicateTargetClassName(file, content)?.let { issue ->
+            issues += issue
+        }
+
         detachedDispatcherNames(content).forEach { dispatcherName ->
             issues += "${file.relativePath}: StandardTestDispatcher() must be bound to runTest via testScheduler or used as runTest($dispatcherName)."
         }
@@ -94,11 +106,26 @@ class GeneratedTestQualityGate {
     }
 }
 
+private fun duplicateTargetClassName(file: GeneratedFile, content: String): String? {
+    val fileName = file.relativePath.fileName.toString()
+    if (!fileName.endsWith("GeneratedTest.kt")) return null
+    val targetClass = fileName.removeSuffix("GeneratedTest.kt")
+    if (targetClass.isBlank()) return null
+    val duplicatePattern = Regex("""(?m)^\s*(private\s+)?class\s+${Regex.escape(targetClass)}\b""")
+    return if (duplicatePattern.containsMatchIn(content)) {
+        "${file.relativePath}: redefining or subclassing the target ViewModel inside the generated test file is not allowed."
+    } else {
+        null
+    }
+}
+
 private val TRIVIAL_ASSERT_PATTERN = Regex("""assertTrue\(\s*true\b""")
 private val TODO_COMMENT_PATTERN = Regex("""(?m)^\s*//\s*TODO:|(?m)^\s*/\*\s*TODO:""")
 private val MOCKING_PATTERN = Regex("""\b(io\.mockk|MockK\b|mockk\(|every\s*\{|coEvery\s*\{|Mockito\b)""")
 private val STATIC_MOCKING_PATTERN = Regex("""\bmockkStatic\s*\(""")
 private val CANCEL_PATTERN = Regex("""\.\s*cancel\s*\(""")
+private val RUN_TEST_API_PATTERN = Regex("""\brunTest\s*\(""")
+private val TEST_DISPATCHER_API_PATTERN = Regex("""\b(StandardTestDispatcher|advanceUntilIdle|testScheduler)\b""")
 private val CLASS_LEVEL_TEST_DISPATCHER_PATTERN = Regex(
     """(?m)^\s*(private\s+)?val\s+\w+\s*=\s*StandardTestDispatcher\(\)\s*$""",
 )

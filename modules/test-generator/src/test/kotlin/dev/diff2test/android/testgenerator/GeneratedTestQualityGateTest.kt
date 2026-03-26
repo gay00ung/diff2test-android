@@ -3,6 +3,7 @@ package dev.diff2test.android.testgenerator
 import dev.diff2test.android.core.GeneratedFile
 import dev.diff2test.android.core.GeneratedTestBundle
 import dev.diff2test.android.core.RiskLevel
+import dev.diff2test.android.core.StyleGuide
 import dev.diff2test.android.core.TestPlan
 import dev.diff2test.android.core.TestType
 import java.nio.file.Path
@@ -64,6 +65,56 @@ class GeneratedTestQualityGateTest {
 
         assertFalse(report.passed)
         assertTrue(report.issues.any { "StandardTestDispatcher()" in it })
+    }
+
+    @Test
+    fun `blocks redefining the target viewmodel inside generated test`() {
+        val report = GeneratedTestQualityGate().evaluate(
+            bundle(
+                """
+                    package com.example.auth
+
+                    import kotlin.test.Test
+                    import kotlin.test.assertEquals
+
+                    class LoginViewModelGeneratedTest {
+                        @Test
+                        fun `login is stable`() {
+                            assertEquals(1, 1)
+                        }
+
+                        private class LoginViewModel
+                    }
+                """.trimIndent(),
+            ),
+        )
+
+        assertFalse(report.passed)
+        assertTrue(report.issues.any { "redefining or subclassing the target ViewModel" in it })
+    }
+
+    @Test
+    fun `blocks coroutine test apis when module style does not support them`() {
+        val report = GeneratedTestQualityGate().evaluate(
+            bundle(
+                """
+                    package com.example.auth
+
+                    import org.junit.Test
+                    import kotlinx.coroutines.test.runTest
+                    import kotlinx.coroutines.test.StandardTestDispatcher
+
+                    class LoginViewModelGeneratedTest {
+                        @Test
+                        fun `login updates state on success`() = runTest(StandardTestDispatcher(testScheduler)) { }
+                    }
+                """.trimIndent(),
+            ),
+            StyleGuide(assertionStyle = "junit4", coroutineEntryPoint = "unavailable"),
+        )
+
+        assertFalse(report.passed)
+        assertTrue(report.issues.any { "module does not declare kotlinx-coroutines-test" in it })
     }
 
     private fun bundle(content: String) = GeneratedTestBundle(

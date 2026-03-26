@@ -103,6 +103,8 @@ class OpenAiResponsesTestGeneratorTest {
 
         assertContains(requestBody, "\"model\":\"qwen3-coder-next-mlx\"")
         assertContains(requestBody, "\"temperature\":0")
+        assertContains(requestBody, "\"response_format\":{\"type\":\"json_schema\"")
+        assertContains(requestBody, "\"name\":\"generated_viewmodel_test\"")
         assertContains(requestBody, "\"messages\"")
         assertContains(requestBody, "\"role\":\"system\"")
         assertContains(requestBody, "\"role\":\"user\"")
@@ -293,6 +295,48 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `normalizes kotlin test imports to junit4 when module style requires it`() {
+        val content = """
+            package com.example.auth
+
+            import kotlin.test.Test
+            import kotlin.test.assertEquals
+            import kotlin.test.assertTrue
+
+            class LoginViewModelGeneratedTest {
+                @Test
+                fun `login updates state`() {
+                    assertEquals(1, 1)
+                    assertTrue(true)
+                }
+            }
+        """.trimIndent()
+
+        val sanitized = sanitizeGeneratedKotlin(
+            content,
+            StyleGuide(assertionStyle = "junit4"),
+        )
+
+        assertContains(sanitized, "import org.junit.Test")
+        assertContains(sanitized, "import org.junit.Assert.assertEquals")
+        assertContains(sanitized, "import org.junit.Assert.assertTrue")
+        assertTrue("import kotlin.test.Test" !in sanitized)
+    }
+
+    @Test
+    fun `extracts first json object when model adds trailing text`() {
+        val payload = extractStructuredPayloadFromText(
+            """
+                {"content":"package com.example\nclass SampleGeneratedTest","warnings":["unsupported async path"]}
+                Additional explanation the model should not have emitted.
+            """.trimIndent(),
+        )
+
+        assertContains(payload.content, "class SampleGeneratedTest")
+        assertEquals(listOf("unsupported async path"), payload.warnings)
+    }
+
+    @Test
     fun `prompt includes collaborator source when available`() {
         val fixturePath = findRepoRoot()
             .resolve("fixtures/sample-app/app/src/main/java/com/example/auth/SignUpViewModel.kt")
@@ -399,6 +443,103 @@ class OpenAiResponsesTestGeneratorTest {
 
         assertTrue(bundle.files.single().content.contains("class SignUpViewModelGeneratedTest"))
         assertContains(bundle.warnings.joinToString("\n"), "Falling back to heuristic generation.")
+    }
+
+    @Test
+    fun `falls back to heuristic generation when ai output fails quality gate`() {
+        val generator = ChatCompletionsTestGenerator(
+            config = ChatCompletionsConfig(
+                apiKey = "sk-local",
+                model = "qwen3-coder-next-mlx",
+                baseUrl = "http://127.0.0.1:12345/v1",
+            ),
+            failureMode = AiFailureMode.FALLBACK_TO_HEURISTIC,
+            httpClient = fakeHttpClient(
+                statusCode = 200,
+                body = """
+                    {
+                      "choices": [
+                        {
+                          "message": {
+                            "role": "assistant",
+                            "content": "{\"content\":\"package com.example.auth\\n\\nimport kotlinx.coroutines.test.runTest\\n\\nclass SignUpViewModelGeneratedTest {\\n    private class SignUpViewModel\\n}\",\"warnings\":[]}"
+                          }
+                        }
+                      ]
+                    }
+                """.trimIndent(),
+            ),
+        )
+
+        val bundle = generator.generate(
+            plan(),
+            context().copy(styleGuide = StyleGuide(assertionStyle = "junit4", coroutineEntryPoint = "unavailable")),
+            analysis(),
+        )
+
+        assertContains(bundle.warnings.joinToString("\n"), "AI output failed the quality gate")
+        assertContains(bundle.files.single().content, "class SignUpViewModelGeneratedTest")
+        assertTrue("private class SignUpViewModel" !in bundle.files.single().content)
+    }
+
+    @Test
+    fun `heuristic generator respects junit4 only module style`() {
+        val bundle = KotlinUnitTestGenerator().generate(
+            plan(),
+            context().copy(styleGuide = StyleGuide(assertionStyle = "junit4", coroutineEntryPoint = "unavailable")),
+            analysis(),
+        )
+
+        val content = bundle.files.single().content
+        assertContains(content, "import org.junit.Test")
+        assertContains(content, "import org.junit.Assert.assertEquals")
+        assertTrue("runTest(" !in content)
+        assertTrue("StandardTestDispatcher" !in content)
+    }
+
+    @Test
+    fun `bypasses ai for modules without coroutine test support and direct singleton access`() {
+        val analysis = ViewModelAnalysis(
+            className = "NutritionChatViewModel",
+            packageName = "net.ifmain.androiddummy.chatbot.ui",
+            filePath = findRepoRoot().resolve("fixtures/sample-app/app/src/main/java/com/example/auth/LoginViewModel.kt"),
+            publicMethods = listOf(
+                dev.diff2test.android.core.TargetMethod(
+                    name = "sendMessage",
+                    signature = "fun sendMessage()",
+                    body = "ChatbotService.api.sendMessage(request)",
+                    mutatesState = true,
+                ),
+            ),
+        )
+        val plan = TestPlan(
+            targetClass = "NutritionChatViewModel",
+            targetMethods = listOf("sendMessage"),
+            testType = TestType.LOCAL_UNIT,
+            scenarios = emptyList(),
+            requiredFakes = emptyList(),
+            assertions = emptyList(),
+            riskLevel = RiskLevel.LOW,
+        )
+        val generator = ChatCompletionsTestGenerator(
+            config = ChatCompletionsConfig(
+                apiKey = "sk-local",
+                model = "qwen3-coder-next-mlx",
+                baseUrl = "http://127.0.0.1:12345/v1",
+            ),
+            httpClient = fakeHttpClient(statusCode = 500, body = "should not be called"),
+        )
+
+        val bundle = generator.generate(
+            plan = plan,
+            context = TestContext(
+                moduleName = "app",
+                styleGuide = StyleGuide(assertionStyle = "junit4", coroutineEntryPoint = "unavailable"),
+            ),
+            analysis = analysis,
+        )
+
+        assertContains(bundle.warnings.joinToString("\n"), "AI generation was skipped")
     }
 
     private fun findRepoRoot(): Path {
