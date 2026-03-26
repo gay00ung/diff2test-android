@@ -120,6 +120,27 @@ class D2tConfigTest {
     }
 
     @Test
+    fun `defaults anthropic config to native messages protocol`() {
+        val configFile = Files.createTempFile("d2t-anthropic-config", ".toml")
+        Files.writeString(
+            configFile,
+            """
+            [ai]
+            provider = "anthropic"
+            """.trimIndent(),
+        )
+        val loadResult = loadConfig(configFile)
+        val resolved = resolveAiConfiguration(loadResult, mapOf("ANTHROPIC_API_KEY" to "sk-ant"))
+
+        assertEquals(AiProvider.ANTHROPIC, resolved?.provider)
+        assertEquals(AiProtocol.ANTHROPIC_MESSAGES, resolved?.protocol)
+        assertEquals("ANTHROPIC_API_KEY", resolved?.apiKeyEnv)
+        assertEquals("claude-sonnet-4-5", resolved?.model)
+        assertEquals("https://api.anthropic.com/v1", resolved?.baseUrl)
+        assertTrue(resolved?.supportedByGenerator == true)
+    }
+
+    @Test
     fun `doctor report supports native gemini protocol`() {
         val loadResult = ConfigLoadResult.Loaded(
             path = defaultConfigPath(),
