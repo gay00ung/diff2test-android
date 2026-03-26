@@ -304,6 +304,32 @@ class OpenAiResponsesTestGeneratorTest {
     }
 
     @Test
+    fun `rewrites invalid runTest testScheduler context and restores dispatcher import`() {
+        val content = """
+            package net.ifmain.androiddummy.chatbot.ui
+
+            import kotlinx.coroutines.test.runTest
+            import kotlin.test.Test
+            import kotlin.test.assertEquals
+
+            class NutritionChatViewModelGeneratedTest {
+                @Test
+                fun `initial state is stable`() = runTest(StandardTestDispatcher(testScheduler)) {
+                    val testDispatcher = StandardTestDispatcher(testScheduler)
+                    assertEquals(0, 0)
+                }
+            }
+        """.trimIndent()
+
+        val sanitized = sanitizeGeneratedKotlin(content)
+
+        assertTrue("runTest(StandardTestDispatcher(testScheduler))" !in sanitized)
+        assertContains(sanitized, "fun `initial state is stable`() = runTest {")
+        assertContains(sanitized, "val testDispatcher = StandardTestDispatcher(testScheduler)")
+        assertContains(sanitized, "import kotlinx.coroutines.test.StandardTestDispatcher")
+    }
+
+    @Test
     fun `adds common coroutine flow and lifecycle imports used by generated fakes`() {
         val content = """
             package net.ifmain.androiddummy.chatbot.ui

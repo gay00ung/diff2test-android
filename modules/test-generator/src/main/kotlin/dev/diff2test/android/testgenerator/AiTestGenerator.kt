@@ -1250,6 +1250,10 @@ internal fun stabilizeCoroutineTestPatterns(content: String): String {
     }
 
     var updated = content
+    updated = updated.replace(
+        RUN_TEST_TEST_SCHEDULER_CONTEXT_PATTERN,
+        "runTest {",
+    )
     CLASS_LEVEL_TEST_DISPATCHER_PATTERN.find(updated)?.let { match ->
         val dispatcherName = match.groupValues[1]
         updated = updated.replace(match.value, "")
@@ -1335,6 +1339,12 @@ private fun ensureGeneratedImports(content: String): String {
         if ("runTest(" in content && "import kotlinx.coroutines.test.runTest" !in content) {
             add("import kotlinx.coroutines.test.runTest")
         }
+        if (
+            "StandardTestDispatcher(" in content &&
+            "import kotlinx.coroutines.test.StandardTestDispatcher" !in content
+        ) {
+            add("import kotlinx.coroutines.test.StandardTestDispatcher")
+        }
         if ("advanceUntilIdle(" in content && "import kotlinx.coroutines.test.advanceUntilIdle" !in content) {
             add("import kotlinx.coroutines.test.advanceUntilIdle")
         }
@@ -1379,6 +1389,9 @@ private fun ensureExperimentalCoroutinesOptIn(content: String): String {
 
 private val CLASS_LEVEL_TEST_DISPATCHER_PATTERN = Regex(
     """(?m)^\s*private\s+val\s+(\w+)\s*=\s*StandardTestDispatcher\(\)\s*\n?""",
+)
+private val RUN_TEST_TEST_SCHEDULER_CONTEXT_PATTERN = Regex(
+    """runTest\s*\(\s*(?:context\s*=\s*)?StandardTestDispatcher\s*\(\s*(?:this\.)?testScheduler\s*\)\s*\)\s*\{""",
 )
 private val CLASS_DECLARATION_PATTERN = Regex("""(?m)^class\s+\w+""")
 private val GENERATED_TEST_BLOCK_PATTERN = Regex("""@Test[\s\S]*?(?=\n\s*@Test|\n})""")
