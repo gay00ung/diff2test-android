@@ -1073,6 +1073,8 @@ private fun <T> elapsedFailure(startedAt: Long, message: String, error: Exceptio
     throw IllegalStateException(message, error)
 }
 
+private val DIRECT_SINGLETON_ACCESS_PATTERN = Regex("""\b[A-Z][A-Za-z0-9_]*\.[a-z][A-Za-z0-9_]*""")
+
 private fun maybeBypassAi(
     plan: TestPlan,
     context: TestContext,
@@ -1080,8 +1082,10 @@ private fun maybeBypassAi(
     fallback: TestGenerator,
 ): GeneratedTestBundle? {
     val usesDirectSingleton = analysis.publicMethods.any { method ->
-        Regex("""\b[A-Z][A-Za-z0-9_]*\.[a-z][A-Za-z0-9_]*""").containsMatchIn(method.body.orEmpty())
-    }
+        DIRECT_SINGLETON_ACCESS_PATTERN.containsMatchIn(method.body.orEmpty())
+    } || runCatching {
+        Files.exists(analysis.filePath) && DIRECT_SINGLETON_ACCESS_PATTERN.containsMatchIn(Files.readString(analysis.filePath))
+    }.getOrDefault(false)
     if (context.styleGuide.coroutineEntryPoint == "runTest" || !usesDirectSingleton) {
         return null
     }
