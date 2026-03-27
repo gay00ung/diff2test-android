@@ -3,4 +3,4 @@ plugins {
 }
 
 group = "dev.diff2test.android"
-version = "1.0.3"
+version = "1.0.4"
